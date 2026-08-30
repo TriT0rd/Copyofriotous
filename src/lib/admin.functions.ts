@@ -89,6 +89,9 @@ export const ORDER_STATUSES = [
 export const PAYMENT_STATUSES = ["Pending", "Paid", "Failed", "Refunded"] as const;
 
 export const checkIsAdmin = createServerFn({ method: "GET" })
+  .inputValidator((d?: { token?: string }) => ({
+    token: typeof d?.token === "string" ? d.token : undefined,
+  }))
   .middleware([requireAuth])
   .handler(async ({ context }): Promise<boolean> => {
     return context.isAdmin;
@@ -98,6 +101,7 @@ export const adminListProducts = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }): Promise<AdminProduct[]> => {
     await assertAdmin(context);
+    await ensureDbSchema();
     const sql = getSql();
     const rows = await sql`
       SELECT id, name, slug, description, price, images, sizes, colors, tags, stock_quantity, is_active, category
@@ -105,7 +109,7 @@ export const adminListProducts = createServerFn({ method: "GET" })
       ORDER BY updated_at DESC
     `;
     return rows.map((p: any) => ({
-      id: p.id,
+      id: String(p.id),
       title: p.name,
       handle: p.slug,
       status: p.is_active ? "ACTIVE" : "DRAFT",
@@ -132,13 +136,13 @@ export const adminSetInventory = createServerFn({ method: "POST" })
     await assertAdmin(context);
     const sql = getSql();
     const before = await sql`
-      SELECT stock_quantity FROM products WHERE id = ${data.productId} LIMIT 1
+      SELECT stock_quantity FROM products WHERE id::text = ${data.productId} LIMIT 1
     `;
     const previous = Number(before[0]?.stock_quantity ?? 0);
 
     await sql`
       UPDATE products SET stock_quantity = ${data.quantity}, updated_at = NOW()
-      WHERE id = ${data.productId}
+      WHERE id::text = ${data.productId}
     `;
 
     await logAudit(context, "inventory.set", "product", data.productId, {
@@ -158,23 +162,23 @@ export const adminDeleteProduct = createServerFn({ method: "POST" })
     const sql = getSql();
 
     const refs = await sql`
-      SELECT count(*)::int as count FROM order_items WHERE product_id = ${data.productId}
+      SELECT count(*)::int as count FROM order_items WHERE product_id::text = ${data.productId}
     `;
 
     if ((refs[0]?.count ?? 0) > 0) {
-      const row = await sql`SELECT tags FROM products WHERE id = ${data.productId} LIMIT 1`;
+      const row = await sql`SELECT tags FROM products WHERE id::text = ${data.productId} LIMIT 1`;
       const tags: string[] = Array.isArray(row[0]?.tags) ? row[0].tags : [];
       const updatedTags = tags.includes(ARCHIVED_TAG) ? tags : [...tags, ARCHIVED_TAG];
 
       await sql`
         UPDATE products
         SET is_active = false, tags = ${JSON.stringify(updatedTags)}, updated_at = NOW()
-        WHERE id = ${data.productId}
+        WHERE id::text = ${data.productId}
       `;
       return { ok: true, archived: true };
     }
 
-    await sql`DELETE FROM products WHERE id = ${data.productId}`;
+    await sql`DELETE FROM products WHERE id::text = ${data.productId}`;
     return { ok: true, archived: false };
   });
 
@@ -186,7 +190,7 @@ export const adminSetProductStatus = createServerFn({ method: "POST" })
     const sql = getSql();
     await sql`
       UPDATE products SET is_active = ${data.status === "ACTIVE"}, updated_at = NOW()
-      WHERE id = ${data.productId}
+      WHERE id::text = ${data.productId}
     `;
     return { ok: true };
   });
@@ -248,7 +252,7 @@ export const adminUpdateProduct = createServerFn({ method: "POST" })
         is_active = ${values.is_active},
         tags = ${JSON.stringify(values.tags)},
         updated_at = NOW()
-      WHERE id = ${data.productId}
+      WHERE id::text = ${data.productId}
     `;
 
     await syncProductVariants(context, data.productId, values.sizes, values.colors);
@@ -275,13 +279,14 @@ export const adminListVariants = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }): Promise<AdminVariant[]> => {
     await assertAdmin(context);
+    await ensureDbSchema();
     const sql = getSql();
     const rows = await sql`
       SELECT 
         v.id, v.product_id, v.size, v.color, v.stock_quantity, v.reserved_stock, v.low_stock_threshold,
         p.name as product_name, p.images as product_images, p.is_active
       FROM product_variants v
-      LEFT JOIN products p ON v.product_id = p.id
+      LEFT JOIN products p ON v.product_id::text = p.id::text
       ORDER BY v.created_at ASC
     `;
 
@@ -292,8 +297,8 @@ export const adminListVariants = createServerFn({ method: "GET" })
           ? JSON.parse(v.product_images)
           : [];
       return {
-        id: v.id,
-        product_id: v.product_id,
+        id: String(v.id),
+        product_id: String(v.product_id),
         product_name: v.product_name ?? "Product",
         product_image: images[0] ?? null,
         is_active: Boolean(v.is_active),
@@ -319,7 +324,7 @@ export const adminSetVariantInventory = createServerFn({ method: "POST" })
     const before = await sql`
       SELECT product_id, stock_quantity, reserved_stock, size, color
       FROM product_variants
-      WHERE id = ${data.variantId}
+      WHERE id::text = ${data.variantId}
       LIMIT 1
     `;
     if (before.length === 0) throw new Error("That variant no longer exists");
@@ -333,7 +338,7 @@ export const adminSetVariantInventory = createServerFn({ method: "POST" })
     const previous = Number(v.stock_quantity ?? 0);
     await sql`
       UPDATE product_variants SET stock_quantity = ${data.quantity}, updated_at = NOW()
-      WHERE id = ${data.variantId}
+      WHERE id::text = ${data.variantId}
     `;
 
     await logAudit(context, "inventory.set_variant", "product_variant", data.variantId, {
@@ -349,6 +354,7 @@ export const adminListOrders = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }): Promise<AdminOrder[]> => {
     await assertAdmin(context);
+    await ensureDbSchema();
     const sql = getSql();
     const orders = await sql`
       SELECT id, order_number, created_at, total_amount, subtotal, discount_amount, discount_code,
@@ -362,24 +368,24 @@ export const adminListOrders = createServerFn({ method: "GET" })
 
     if (orders.length === 0) return [];
 
-    const orderIds = orders.map((o) => o.id);
+    const orderIds = orders.map((o) => String(o.id));
     const items = await sql`
       SELECT i.id, i.order_id, i.product_id, i.product_name, i.product_image, i.quantity, i.price,
         i.selected_size, i.selected_color, i.subtotal, i.design_submission_id,
         d.preview_data_url as design_preview
       FROM order_items i
       LEFT JOIN design_submissions d ON i.design_submission_id = d.id
-      WHERE i.order_id = ANY(${orderIds})
+      WHERE i.order_id::text = ANY(${orderIds}::text[])
     `;
 
     const itemsByOrderId = new Map<string, AdminOrderItem[]>();
     for (const item of items) {
-      const oId = item.order_id as string;
+      const oId = String(item.order_id);
       if (!itemsByOrderId.has(oId)) itemsByOrderId.set(oId, []);
       itemsByOrderId.get(oId)!.push({
-        id: item.id as string,
-        product_id: (item.product_id as string) || null,
-        product_name: item.product_name as string,
+        id: String(item.id),
+        product_id: item.product_id ? String(item.product_id) : null,
+        product_name: (item.product_name as string) || "Item",
         product_image: (item.product_image as string) || null,
         quantity: Number(item.quantity || 1),
         price: Number(item.price || 0),
@@ -392,7 +398,7 @@ export const adminListOrders = createServerFn({ method: "GET" })
     }
 
     return orders.map((o: any) => ({
-      id: o.id,
+      id: String(o.id),
       order_number: o.order_number,
       created_at: new Date(o.created_at).toISOString(),
       total_amount: Number(o.total_amount || 0),
@@ -418,7 +424,7 @@ export const adminListOrders = createServerFn({ method: "GET" })
       delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : null,
       cancelled_at: o.cancelled_at ? new Date(o.cancelled_at).toISOString() : null,
       admin_notes: o.admin_notes || null,
-      items: itemsByOrderId.get(o.id) || [],
+      items: itemsByOrderId.get(String(o.id)) || [],
     }));
   });
 
@@ -441,22 +447,22 @@ export const adminUpdateOrderStatus = createServerFn({ method: "POST" })
     const sql = getSql();
 
     if (data.status) {
-      await sql`UPDATE orders SET status = ${data.status}, updated_at = NOW() WHERE id = ${data.orderId}`;
+      await sql`UPDATE orders SET status = ${data.status}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
     }
     if (data.paymentStatus) {
-      await sql`UPDATE orders SET payment_status = ${data.paymentStatus}, updated_at = NOW() WHERE id = ${data.orderId}`;
+      await sql`UPDATE orders SET payment_status = ${data.paymentStatus}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
     }
     if (data.courierName !== undefined) {
-      await sql`UPDATE orders SET courier_name = ${data.courierName}, updated_at = NOW() WHERE id = ${data.orderId}`;
+      await sql`UPDATE orders SET courier_name = ${data.courierName}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
     }
     if (data.trackingNumber !== undefined) {
-      await sql`UPDATE orders SET tracking_number = ${data.trackingNumber}, updated_at = NOW() WHERE id = ${data.orderId}`;
+      await sql`UPDATE orders SET tracking_number = ${data.trackingNumber}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
     }
     if (data.trackingUrl !== undefined) {
-      await sql`UPDATE orders SET tracking_url = ${data.trackingUrl}, updated_at = NOW() WHERE id = ${data.orderId}`;
+      await sql`UPDATE orders SET tracking_url = ${data.trackingUrl}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
     }
     if (data.adminNotes !== undefined) {
-      await sql`UPDATE orders SET admin_notes = ${data.adminNotes}, updated_at = NOW() WHERE id = ${data.orderId}`;
+      await sql`UPDATE orders SET admin_notes = ${data.adminNotes}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
     }
 
     await logAudit(context, "order.update", "order", data.orderId, { status: data.status });
@@ -477,7 +483,7 @@ export const adminBulkUpdateOrderStatus = createServerFn({ method: "POST" })
     await sql`
       UPDATE orders
       SET status = ${data.status}, updated_at = NOW()
-      WHERE id = ANY(${data.orderIds})
+      WHERE id::text = ANY(${data.orderIds}::text[])
     `;
 
     await logAudit(context, "order.bulk_update", "order", null, {
@@ -496,7 +502,7 @@ export const adminGetDesign = createServerFn({ method: "GET" })
     const rows = await sql`
       SELECT id, color_name, placement, product_title, preview_data_url, canvases, created_at, customer_email, customer_name
       FROM design_submissions
-      WHERE id = ${data.id}
+      WHERE id::text = ${String(data.id)}
       LIMIT 1
     `;
     return rows[0] || null;

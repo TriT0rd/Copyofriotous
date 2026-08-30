@@ -23,6 +23,7 @@ import {
 import { money, dateTime } from "@/components/admin/format";
 import { productImageUrl } from "@/lib/product-images";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -100,7 +101,26 @@ function AdminReturnsPage() {
       </div>
 
       {listQ.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading returns…</p>
+        <div className="space-y-3 animate-pulse">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="rounded-xl border bg-card p-4 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-28 rounded" />
+                  <Skeleton className="h-5 w-20 rounded-full" />
+                </div>
+                <Skeleton className="h-4 w-24 rounded" />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1.5 flex-1">
+                  <Skeleton className="h-4 w-48 rounded" />
+                  <Skeleton className="h-3 w-64 rounded" />
+                </div>
+                <Skeleton className="h-8 w-24 rounded-md" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No returns match this filter.</p>
       ) : (

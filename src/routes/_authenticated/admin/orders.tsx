@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ChevronDown, ChevronUp, Printer, Download } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Search = { q?: string; status?: string; payment?: string; from?: string; to?: string };
 
@@ -289,7 +290,34 @@ function OrdersPage() {
       )}
 
       {ordersQ.isLoading ? (
-        <p className="text-muted-foreground">Loading orders…</p>
+        <div className="space-y-3 animate-pulse">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div
+              key={i}
+              className="rounded-xl border bg-card p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs"
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <Skeleton className="h-4 w-4 rounded" />
+                <div className="space-y-2 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-5 w-24 rounded" />
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                  </div>
+                  <Skeleton className="h-3.5 w-64 max-w-full rounded" />
+                </div>
+              </div>
+              <div className="text-right space-y-1">
+                <Skeleton className="h-5 w-20 ml-auto rounded" />
+                <Skeleton className="h-3 w-14 ml-auto rounded" />
+              </div>
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-8 w-20 rounded-md" />
+                <Skeleton className="h-8 w-8 rounded-md" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : filtered.length === 0 ? (
         <p className="text-muted-foreground">No orders match these filters.</p>
       ) : (

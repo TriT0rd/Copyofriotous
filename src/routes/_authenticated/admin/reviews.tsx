@@ -19,6 +19,7 @@ import {
   type ReviewStatus,
 } from "@/lib/reviews-shared";
 import { Stars, StarPicker } from "@/components/reviews/star-rating";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   MAX_REVIEW_IMAGES,
   reviewImageUrl,
@@ -481,9 +482,30 @@ function AdminReviewsPage() {
       )}
 
       {listQ.isLoading ? (
-        <p className="mt-10 flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading reviews…
-        </p>
+        <div className="mt-6 space-y-4 animate-pulse">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="rounded-xl border bg-card/40 p-4 flex flex-wrap items-start gap-4 shadow-xs"
+            >
+              <Skeleton className="h-16 w-16 rounded-lg shrink-0" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-36 rounded" />
+                  <Skeleton className="h-4 w-16 rounded-full" />
+                </div>
+                <Skeleton className="h-3.5 w-48 rounded" />
+                <Skeleton className="h-4 w-24 rounded" />
+                <Skeleton className="h-4 w-3/4 rounded" />
+                <Skeleton className="h-3.5 w-1/2 rounded" />
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Skeleton className="h-8 w-20 rounded-md" />
+                <Skeleton className="h-8 w-8 rounded-md" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : rows.length === 0 ? (
         <p className="mt-10 text-sm text-muted-foreground">No reviews match this filter.</p>
       ) : (

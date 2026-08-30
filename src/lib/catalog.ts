@@ -399,21 +399,21 @@ export const fetchProductsServerFn = createServerFn({ method: "POST" })
         return FALLBACK_PRODUCTS.slice(0, first).map(toCatalogProduct);
       }
 
-      const productIds = products.map((p) => p.id as string);
+      const productIds = products.map((p) => String(p.id));
       const variants = await sql`
         SELECT id, product_id, size, color, stock_quantity, reserved_stock, low_stock_threshold
         FROM product_variants
-        WHERE product_id = ANY(${productIds})
+        WHERE product_id::text = ANY(${productIds}::text[])
       `;
 
       const variantsByProductId = new Map<string, VariantRow[]>();
       for (const v of variants) {
-        const pId = v.product_id as string;
+        const pId = String(v.product_id);
         if (!variantsByProductId.has(pId)) variantsByProductId.set(pId, []);
         variantsByProductId.get(pId)!.push({
-          id: v.id as string,
-          size: v.size as string,
-          color: v.color as string,
+          id: String(v.id),
+          size: (v.size as string) || "",
+          color: (v.color as string) || "",
           stock_quantity: Number(v.stock_quantity || 0),
           reserved_stock: Number(v.reserved_stock || 0),
           low_stock_threshold: Number(v.low_stock_threshold || 2),
@@ -421,7 +421,7 @@ export const fetchProductsServerFn = createServerFn({ method: "POST" })
       }
 
       const rows: ProductRow[] = products.map((p) => ({
-        id: p.id as string,
+        id: String(p.id),
         name: p.name as string,
         slug: p.slug as string,
         description: (p.description as string) || null,
@@ -446,7 +446,7 @@ export const fetchProductsServerFn = createServerFn({ method: "POST" })
         stock_quantity: Number(p.stock_quantity || 0),
         is_active: Boolean(p.is_active),
         tags: Array.isArray(p.tags) ? p.tags : typeof p.tags === "string" ? JSON.parse(p.tags) : [],
-        product_variants: variantsByProductId.get(p.id as string) || [],
+        product_variants: variantsByProductId.get(String(p.id)) || [],
       }));
 
       return rows.map(toCatalogProduct);
@@ -475,13 +475,13 @@ export const fetchProductByHandleServerFn = createServerFn({ method: "POST" })
       const products = await sql`
         SELECT id, name, slug, description, price, currency, images, category, sizes, colors, stock_quantity, is_active, tags
         FROM products
-        WHERE (slug = ${data.handle} OR id = ${data.handle}) AND is_active = true
+        WHERE (slug = ${data.handle} OR id::text = ${data.handle}) AND is_active = true
         LIMIT 1
       `;
 
       if (!products || products.length === 0) {
         const fallback = FALLBACK_PRODUCTS.find(
-          (p) => p.slug === data.handle || p.id === data.handle,
+          (p) => p.slug === data.handle || String(p.id) === data.handle,
         );
         return fallback ? toCatalogProduct(fallback).node : null;
       }
@@ -490,20 +490,20 @@ export const fetchProductByHandleServerFn = createServerFn({ method: "POST" })
       const variants = await sql`
         SELECT id, product_id, size, color, stock_quantity, reserved_stock, low_stock_threshold
         FROM product_variants
-        WHERE product_id = ${p.id}
+        WHERE product_id::text = ${String(p.id)}
       `;
 
       const variantRows: VariantRow[] = variants.map((v) => ({
-        id: v.id as string,
-        size: v.size as string,
-        color: v.color as string,
+        id: String(v.id),
+        size: (v.size as string) || "",
+        color: (v.color as string) || "",
         stock_quantity: Number(v.stock_quantity || 0),
         reserved_stock: Number(v.reserved_stock || 0),
         low_stock_threshold: Number(v.low_stock_threshold || 2),
       }));
 
       const row: ProductRow = {
-        id: p.id as string,
+        id: String(p.id),
         name: p.name as string,
         slug: p.slug as string,
         description: (p.description as string) || null,
@@ -535,7 +535,7 @@ export const fetchProductByHandleServerFn = createServerFn({ method: "POST" })
     } catch (err) {
       console.warn("fetchProductByHandle error, using fallback", err);
       const fallback = FALLBACK_PRODUCTS.find(
-        (p) => p.slug === data.handle || p.id === data.handle,
+        (p) => p.slug === data.handle || String(p.id) === data.handle,
       );
       return fallback ? toCatalogProduct(fallback).node : null;
     }

@@ -23,10 +23,14 @@ export function CartDrawer() {
     setMounted(true);
   }, []);
 
-  const totalItems = mounted ? items.reduce((s, i) => s + i.quantity, 0) : 0;
-  const displayItems = mounted ? items : [];
-  const currency = displayItems[0]?.price.currencyCode ?? "INR";
-  const totalPrice = displayItems.reduce((s, i) => s + parseFloat(i.price.amount) * i.quantity, 0);
+  const safeItems = Array.isArray(items) ? items : [];
+  const totalItems = mounted ? safeItems.reduce((s, i) => s + (Number(i?.quantity) || 0), 0) : 0;
+  const displayItems = mounted ? safeItems : [];
+  const currency = displayItems[0]?.price?.currencyCode ?? "INR";
+  const totalPrice = displayItems.reduce(
+    (s, i) => s + (parseFloat(i?.price?.amount || "0") || 0) * (Number(i?.quantity) || 0),
+    0,
+  );
 
   useEffect(() => {
     if (open) syncCart();

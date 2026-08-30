@@ -1,18 +1,33 @@
 import { getSql } from "@/lib/db";
+import { isAdminEmail } from "@/lib/auth";
 
 export type AdminCtx = {
   userId: string;
   user?: { email?: string; role?: string };
+  isAdmin?: boolean;
 };
 
-export async function assertAdmin(context: { userId: string }) {
+export async function assertAdmin(context: {
+  userId: string;
+  user?: { email?: string; role?: string };
+  isAdmin?: boolean;
+}) {
+  if (context.isAdmin) return;
+  if (context.user?.role === "admin" || isAdminEmail(context.user?.email)) return;
+
   const sql = getSql();
   const rows = await sql`
-    SELECT role FROM profiles WHERE id = ${context.userId} AND role = 'admin' LIMIT 1
+    SELECT role, email FROM profiles WHERE id = ${context.userId} LIMIT 1
   `;
   if (rows.length === 0) {
+    if (isAdminEmail(context.user?.email)) return;
     throw new Error("Forbidden: admin only");
   }
+  const r = rows[0];
+  if (r.role === "admin" || isAdminEmail(r.email)) {
+    return;
+  }
+  throw new Error("Forbidden: admin only");
 }
 
 export function slugify(value: string) {
@@ -115,7 +130,7 @@ export async function syncProductVariants(
   const existing = await sql`
     SELECT id, size, color, reserved_stock
     FROM product_variants
-    WHERE product_id = ${productId}
+    WHERE product_id::text = ${String(productId)}
   `;
 
   const key = (v: { size: string; color: string }) => `${v.size}|${v.color}`;
@@ -134,7 +149,7 @@ export async function syncProductVariants(
       const qty = base + (i < rem ? 1 : 0);
       await sql`
         INSERT INTO product_variants (id, product_id, size, color, stock_quantity)
-        VALUES (${varId}, ${productId}, ${v.size}, ${v.color}, ${qty});
+        VALUES (${varId}, ${String(productId)}, ${v.size}, ${v.color}, ${qty});
       `;
     }
   }
@@ -143,10 +158,10 @@ export async function syncProductVariants(
     (v: any) => !wanted.has(key(v)) && Number(v.reserved_stock || 0) === 0,
   );
   if (stale.length) {
-    const staleIds = stale.map((v: any) => v.id);
+    const staleIds = stale.map((v: any) => String(v.id));
     await sql`
       DELETE FROM product_variants
-      WHERE id = ANY(${staleIds})
+      WHERE id::text = ANY(${staleIds}::text[])
     `;
   }
 }

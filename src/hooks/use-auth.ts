@@ -9,7 +9,9 @@ import {
 } from "@/lib/auth";
 
 export function useAuth() {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<
+    (AuthUser & { user_metadata?: { full_name?: string | null } }) | null
+  >(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,22 +22,34 @@ export function useAuth() {
         setLoading(false);
         return;
       }
+      // Keep cookie synchronized with localStorage session token
+      document.cookie = `riotous_session=${encodeURIComponent(token)}; path=/; max-age=2592000; SameSite=Lax`;
+
       const decoded = decodeToken(token);
       if (decoded) {
-        setUser(decoded);
+        setUser({
+          ...decoded,
+          user_metadata: { full_name: decoded.fullName },
+        });
         setLoading(false);
         // Verify with server in background
         getCurrentUserServerFn({ data: { token } })
           .then((u) => {
-            if (u) setUser(u);
-            else {
+            if (u) {
+              setUser({
+                ...u,
+                user_metadata: { full_name: u.fullName },
+              });
+            } else {
               localStorage.removeItem("riotous_session");
+              document.cookie = "riotous_session=; path=/; max-age=0; SameSite=Lax";
               setUser(null);
             }
           })
           .catch(() => {});
       } else {
         localStorage.removeItem("riotous_session");
+        document.cookie = "riotous_session=; path=/; max-age=0; SameSite=Lax";
         setUser(null);
         setLoading(false);
       }
@@ -60,8 +74,11 @@ export function useAuth() {
     const res = await loginServerFn({ data: { email, password } });
     if (res.ok && res.session) {
       localStorage.setItem("riotous_session", res.session.token);
-      document.cookie = `riotous_session=${encodeURIComponent(res.session.token)}; path=/; max-age=2592000`;
-      setUser(res.session.user);
+      document.cookie = `riotous_session=${encodeURIComponent(res.session.token)}; path=/; max-age=2592000; SameSite=Lax`;
+      setUser({
+        ...res.session.user,
+        user_metadata: { full_name: res.session.user.fullName },
+      });
       window.dispatchEvent(new Event("riotous_auth_changed"));
     }
     return res;
@@ -71,8 +88,11 @@ export function useAuth() {
     const res = await registerServerFn({ data: { email, password, fullName } });
     if (res.ok && res.session) {
       localStorage.setItem("riotous_session", res.session.token);
-      document.cookie = `riotous_session=${encodeURIComponent(res.session.token)}; path=/; max-age=2592000`;
-      setUser(res.session.user);
+      document.cookie = `riotous_session=${encodeURIComponent(res.session.token)}; path=/; max-age=2592000; SameSite=Lax`;
+      setUser({
+        ...res.session.user,
+        user_metadata: { full_name: res.session.user.fullName },
+      });
       window.dispatchEvent(new Event("riotous_auth_changed"));
     }
     return res;
@@ -80,7 +100,7 @@ export function useAuth() {
 
   const logout = () => {
     localStorage.removeItem("riotous_session");
-    document.cookie = "riotous_session=; path=/; max-age=0";
+    document.cookie = "riotous_session=; path=/; max-age=0; SameSite=Lax";
     setUser(null);
     window.dispatchEvent(new Event("riotous_auth_changed"));
   };

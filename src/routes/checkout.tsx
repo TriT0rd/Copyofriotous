@@ -55,9 +55,13 @@ function CheckoutPage() {
     setName((v) => v || ((user.user_metadata?.full_name as string | undefined) ?? ""));
   }, [user]);
 
-  const displayItems = mounted ? items : [];
-  const currency = displayItems[0]?.price.currencyCode ?? "INR";
-  const subtotal = displayItems.reduce((s, i) => s + parseFloat(i.price.amount) * i.quantity, 0);
+  const safeItems = Array.isArray(items) ? items : [];
+  const displayItems = mounted ? safeItems : [];
+  const currency = displayItems[0]?.price?.currencyCode ?? "INR";
+  const subtotal = displayItems.reduce(
+    (s, i) => s + (parseFloat(i?.price?.amount || "0") || 0) * (Number(i?.quantity) || 0),
+    0,
+  );
   const shipping = subtotal >= 1999 || subtotal === 0 ? 0 : 79;
   const total = subtotal + shipping;
 
@@ -250,7 +254,8 @@ function CheckoutPage() {
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">
-                  Subtotal ({displayItems.reduce((s, i) => s + i.quantity, 0)} items)
+                  Subtotal ({displayItems.reduce((s, i) => s + (Number(i?.quantity) || 0), 0)}{" "}
+                  items)
                 </dt>
                 <dd>{formatPrice(subtotal, currency)}</dd>
               </div>

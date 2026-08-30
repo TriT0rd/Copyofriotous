@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const Route = createFileRoute("/_authenticated/admin/inventory")({
   component: InventoryPage,
@@ -125,7 +126,39 @@ function InventoryPage() {
       </div>
 
       {variantsQ.isLoading ? (
-        <p className="text-muted-foreground">Loading inventory…</p>
+        <div className="space-y-4 animate-pulse">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl border bg-card overflow-hidden shadow-xs">
+              <div className="flex items-center justify-between border-b p-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-md" />
+                  <div className="space-y-1.5">
+                    <Skeleton className="h-4 w-40 rounded" />
+                    <Skeleton className="h-3 w-24 rounded" />
+                  </div>
+                </div>
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <div className="p-3 space-y-2">
+                {[1, 2, 3].map((j) => (
+                  <div
+                    key={j}
+                    className="flex items-center justify-between py-2 border-b last:border-0"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-12 rounded" />
+                      <Skeleton className="h-4 w-16 rounded" />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-4 w-20 rounded" />
+                      <Skeleton className="h-8 w-24 rounded-md" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : groups.length === 0 ? (
         <p className="text-muted-foreground">Nothing to show.</p>
       ) : (

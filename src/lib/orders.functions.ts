@@ -58,24 +58,24 @@ export const getMyOrders = createServerFn({ method: "GET" })
         SELECT id, order_number, created_at, total_amount, currency, status, payment_status,
           shipping_name, shipping_email, shipping_phone, shipping_address
         FROM orders
-        WHERE user_id = ${context.userId}
+        WHERE user_id::text = ${String(context.userId)}
         ORDER BY created_at DESC
       `;
 
       if (orders.length === 0) return [];
 
-      const orderIds = orders.map((o) => o.id);
+      const orderIds = orders.map((o) => String(o.id));
       const items = await sql`
         SELECT i.order_id, i.product_name, i.product_image, i.quantity, i.price, i.selected_size, i.selected_color,
           i.design_submission_id, d.preview_data_url
         FROM order_items i
         LEFT JOIN design_submissions d ON i.design_submission_id = d.id
-        WHERE i.order_id = ANY(${orderIds})
+        WHERE i.order_id::text = ANY(${orderIds}::text[])
       `;
 
       const itemsByOrderId = new Map<string, OrderLineItem[]>();
       for (const item of items as any[]) {
-        const oId = item.order_id;
+        const oId = String(item.order_id);
         if (!itemsByOrderId.has(oId)) itemsByOrderId.set(oId, []);
         const currency = "INR";
         itemsByOrderId.get(oId)!.push({
@@ -90,7 +90,7 @@ export const getMyOrders = createServerFn({ method: "GET" })
       }
 
       return orders.map((o: any) => ({
-        id: o.id,
+        id: String(o.id),
         name: o.order_number,
         processedAt: new Date(o.created_at).toISOString(),
         financialStatus: o.payment_status || "Pending",
@@ -102,7 +102,7 @@ export const getMyOrders = createServerFn({ method: "GET" })
           phone: o.shipping_phone || null,
           address: o.shipping_address || "",
         },
-        lineItems: itemsByOrderId.get(o.id) || [],
+        lineItems: itemsByOrderId.get(String(o.id)) || [],
       }));
     } catch (e) {
       console.warn("getMyOrders error", e);
@@ -146,9 +146,9 @@ export const placeOrder = createServerFn({ method: "POST" })
     const priceById = new Map<string, number>();
     if (productIds.length) {
       const prods = await sql`
-        SELECT id, price FROM products WHERE id = ANY(${productIds})
+        SELECT id, price FROM products WHERE id::text = ANY(${productIds}::text[])
       `;
-      for (const p of prods as any[]) priceById.set(p.id, Number(p.price || 0));
+      for (const p of prods as any[]) priceById.set(String(p.id), Number(p.price || 0));
     }
 
     const CUSTOM_PRICE = 1499;
@@ -169,7 +169,7 @@ export const placeOrder = createServerFn({ method: "POST" })
         id, user_id, order_number, subtotal, discount_amount, shipping_charge, tax_amount, total_amount,
         currency, status, payment_status, payment_method, shipping_name, shipping_email, shipping_phone, shipping_address
       ) VALUES (
-        ${orderId}, ${context.userId}, ${orderNumber}, ${itemsTotal}, 0, ${shipping}, 0, ${total},
+        ${orderId}, ${String(context.userId)}, ${orderNumber}, ${itemsTotal}, 0, ${shipping}, 0, ${total},
         ${data.currency}, 'Pending', 'Pending', 'COD', ${data.shippingName}, ${data.shippingEmail}, ${data.shippingPhone}, ${data.shippingAddress}
       );
     `;

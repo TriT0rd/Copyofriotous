@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireAuth } from "@/lib/auth-middleware";
 import { assertAdmin } from "@/lib/admin-utils";
-import { getSql } from "@/lib/db";
+import { getSql, ensureDbSchema } from "@/lib/db";
 
 export type DashboardOrder = {
   id: string;
@@ -74,186 +74,245 @@ export const adminDashboard = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }): Promise<AdminDashboard> => {
     await assertAdmin(context);
+    await ensureDbSchema();
     const sql = getSql();
 
-    const [orders, products, profiles, items] = await Promise.all([
-      sql`
-        SELECT id, order_number, created_at, total_amount, currency, status, payment_status, shipping_name, shipping_email, user_id
-        FROM orders
-        ORDER BY created_at DESC
-        LIMIT 1000
-      `,
-      sql`
-        SELECT id, name, stock_quantity, reserved_stock, low_stock_threshold, is_active
-        FROM products
-      `,
-      sql`
-        SELECT id, email, full_name, created_at
-        FROM profiles
-        ORDER BY created_at DESC
-        LIMIT 500
-      `,
-      sql`
-        SELECT product_name, quantity, subtotal, order_id
-        FROM order_items
-        LIMIT 5000
-      `,
-    ]);
-
-    const currency = (orders[0]?.currency as string) || "INR";
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-    const revenueOrders = orders.filter((o: any) => !VOID.has(o.status));
-    const sum = (list: typeof revenueOrders) =>
-      list.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
-
-    const statusCounts: Record<string, number> = {};
-    const paymentCounts: Record<string, number> = {};
-    for (const o of orders as any[]) {
-      statusCounts[o.status] = (statusCounts[o.status] ?? 0) + 1;
-      paymentCounts[o.payment_status] = (paymentCounts[o.payment_status] ?? 0) + 1;
-    }
-
-    const voidIds = new Set((orders as any[]).filter((o) => VOID.has(o.status)).map((o) => o.id));
-    const bestMap = new Map<string, BestSeller>();
-    for (const it of items as any[]) {
-      if (voidIds.has(it.order_id)) continue;
-      const row = bestMap.get(it.product_name) ?? {
-        name: it.product_name,
-        units: 0,
-        revenue: 0,
-      };
-      row.units += Number(it.quantity || 0);
-      row.revenue += Number(it.subtotal || 0);
-      bestMap.set(it.product_name, row);
-    }
-    const bestSellers = Array.from(bestMap.values())
-      .sort((a, b) => b.units - a.units)
-      .slice(0, 5);
-
-    // Sales by day (last 14 days)
     const daysMap = new Map<string, { revenue: number; orders: number }>();
     for (let i = 13; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 86400000);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       daysMap.set(key, { revenue: 0, orders: 0 });
     }
-    for (const o of revenueOrders as any[]) {
-      const d = new Date(o.created_at);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      if (daysMap.has(key)) {
-        const entry = daysMap.get(key)!;
-        entry.revenue += Number(o.total_amount || 0);
-        entry.orders += 1;
+
+    try {
+      const [
+        orderTotalsRes,
+        countsRes,
+        statusCountsRes,
+        paymentCountsRes,
+        recentOrdersRes,
+        productsRes,
+        recentCustomersRes,
+        bestSellersRes,
+        salesByDayRes,
+      ] = await Promise.all([
+        sql`
+          SELECT 
+            COUNT(*)::int as total_orders,
+            COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Returned', 'Refunded') THEN total_amount ELSE 0 END), 0)::numeric as total_sales,
+            COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Returned', 'Refunded') AND created_at >= CURRENT_DATE THEN total_amount ELSE 0 END), 0)::numeric as sales_today,
+            COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Returned', 'Refunded') AND created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN total_amount ELSE 0 END), 0)::numeric as sales_month,
+            COUNT(CASE WHEN status NOT IN ('Cancelled', 'Returned', 'Refunded') THEN 1 ELSE NULL END)::int as revenue_orders_count
+          FROM orders
+        `,
+        sql`
+          SELECT
+            (SELECT COUNT(*)::int FROM profiles) as total_customers,
+            (SELECT COUNT(*)::int FROM products) as total_products
+        `,
+        sql`
+          SELECT status, COUNT(*)::int as count FROM orders GROUP BY status
+        `,
+        sql`
+          SELECT payment_status, COUNT(*)::int as count FROM orders GROUP BY payment_status
+        `,
+        sql`
+          SELECT id, order_number, created_at, total_amount, currency, status, payment_status, shipping_name, shipping_email
+          FROM orders
+          ORDER BY created_at DESC
+          LIMIT 10
+        `,
+        sql`
+          SELECT id, name, stock_quantity, reserved_stock, low_stock_threshold, is_active
+          FROM products
+          WHERE is_active = true
+          ORDER BY (stock_quantity - reserved_stock) ASC
+          LIMIT 100
+        `,
+        sql`
+          SELECT 
+            p.id, p.email, p.full_name, p.created_at,
+            COUNT(o.id)::int as orders,
+            COALESCE(SUM(CASE WHEN o.status NOT IN ('Cancelled', 'Returned', 'Refunded') THEN o.total_amount ELSE 0 END), 0)::numeric as spent
+          FROM profiles p
+          LEFT JOIN orders o ON p.id::text = o.user_id::text
+          GROUP BY p.id, p.email, p.full_name, p.created_at
+          ORDER BY p.created_at DESC
+          LIMIT 10
+        `,
+        sql`
+          SELECT 
+            oi.product_name as name,
+            COALESCE(SUM(oi.quantity), 0)::int as units,
+            COALESCE(SUM(oi.subtotal), 0)::numeric as revenue
+          FROM order_items oi
+          JOIN orders o ON oi.order_id::text = o.id::text
+          WHERE o.status NOT IN ('Cancelled', 'Returned', 'Refunded')
+          GROUP BY oi.product_name
+          ORDER BY units DESC
+          LIMIT 5
+        `,
+        sql`
+          SELECT 
+            TO_CHAR(created_at, 'YYYY-MM-DD') as date,
+            COALESCE(SUM(total_amount), 0)::numeric as revenue,
+            COUNT(*)::int as orders
+          FROM orders
+          WHERE created_at >= CURRENT_DATE - INTERVAL '14 days'
+            AND status NOT IN ('Cancelled', 'Returned', 'Refunded')
+          GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+          ORDER BY date ASC
+        `,
+      ]);
+
+      const orderTotals = orderTotalsRes[0] || {};
+      const counts = countsRes[0] || {};
+
+      const statusCounts: Record<string, number> = {};
+      for (const row of statusCountsRes as any[]) {
+        if (row?.status) statusCounts[row.status] = Number(row.count || 0);
       }
-    }
-    const salesByDay = Array.from(daysMap.entries()).map(([date, val]) => ({
-      date,
-      revenue: val.revenue,
-      orders: val.orders,
-    }));
 
-    // Customer metrics
-    const customerOrders = new Map<string, { count: number; spent: number }>();
-    for (const o of revenueOrders as any[]) {
-      if (!o.user_id) continue;
-      const c = customerOrders.get(o.user_id) ?? { count: 0, spent: 0 };
-      c.count += 1;
-      c.spent += Number(o.total_amount || 0);
-      customerOrders.set(o.user_id, c);
-    }
-    const recentCustomers: DashboardCustomer[] = (profiles as any[]).slice(0, 10).map((p) => {
-      const stats = customerOrders.get(p.id) ?? { count: 0, spent: 0 };
-      return {
-        id: p.id,
-        email: p.email,
-        full_name: p.full_name,
+      const paymentCounts: Record<string, number> = {};
+      for (const row of paymentCountsRes as any[]) {
+        if (row?.payment_status) paymentCounts[row.payment_status] = Number(row.count || 0);
+      }
+
+      const currency = (recentOrdersRes[0]?.currency as string) || "INR";
+      const totalOrders = Number(orderTotals.total_orders || 0);
+      const totalSales = Number(orderTotals.total_sales || 0);
+      const salesToday = Number(orderTotals.sales_today || 0);
+      const salesMonth = Number(orderTotals.sales_month || 0);
+      const revOrdersCount = Number(orderTotals.revenue_orders_count || 0);
+
+      // Populate daily sales
+      for (const row of salesByDayRes as any[]) {
+        if (row?.date && daysMap.has(row.date)) {
+          daysMap.set(row.date, {
+            revenue: Number(row.revenue || 0),
+            orders: Number(row.orders || 0),
+          });
+        }
+      }
+      const salesByDay = Array.from(daysMap.entries()).map(([date, val]) => ({
+        date,
+        revenue: val.revenue,
+        orders: val.orders,
+      }));
+
+      // Calculate low/out of stock
+      const lowStock: DashboardProduct[] = [];
+      const outOfStock: DashboardProduct[] = [];
+      for (const p of productsRes as any[]) {
+        const available = Number(p.stock_quantity || 0) - Number(p.reserved_stock || 0);
+        const threshold = Number(p.low_stock_threshold || 2);
+        const prod: DashboardProduct = {
+          id: String(p.id),
+          name: p.name,
+          stock_quantity: Number(p.stock_quantity || 0),
+          reserved_stock: Number(p.reserved_stock || 0),
+          low_stock_threshold: threshold,
+          is_active: Boolean(p.is_active),
+        };
+        if (available <= 0) outOfStock.push(prod);
+        else if (available <= threshold) lowStock.push(prod);
+      }
+
+      const recentOrders: DashboardOrder[] = (recentOrdersRes as any[]).map((o) => ({
+        id: String(o.id),
+        order_number: o.order_number,
+        created_at: new Date(o.created_at).toISOString(),
+        total_amount: Number(o.total_amount || 0),
+        currency: o.currency || "INR",
+        status: o.status || "Pending",
+        payment_status: o.payment_status || "Pending",
+        shipping_name: o.shipping_name || "",
+        shipping_email: o.shipping_email || "",
+      }));
+
+      const recentCustomers: DashboardCustomer[] = (recentCustomersRes as any[]).map((p) => ({
+        id: String(p.id),
+        email: p.email || null,
+        full_name: p.full_name || null,
         created_at: new Date(p.created_at).toISOString(),
-        orders: stats.count,
-        spent: stats.spent,
+        orders: Number(p.orders || 0),
+        spent: Number(p.spent || 0),
+      }));
+
+      const bestSellers: BestSeller[] = (bestSellersRes as any[]).map((b) => ({
+        name: b.name,
+        units: Number(b.units || 0),
+        revenue: Number(b.revenue || 0),
+      }));
+
+      const notifications: AdminNotification[] = [];
+      for (const o of recentOrders.slice(0, 5)) {
+        notifications.push({
+          kind: "order",
+          title: `New Order ${o.order_number}`,
+          detail: `${o.shipping_name || "Customer"} placed an order worth ₹${o.total_amount}`,
+          at: o.created_at,
+        });
+      }
+      for (const p of outOfStock.slice(0, 5)) {
+        notifications.push({
+          kind: "out_of_stock",
+          title: `Out of Stock: ${p.name}`,
+          detail: `0 units remaining in stock`,
+          at: null,
+        });
+      }
+
+      return {
+        currency,
+        totals: {
+          sales: totalSales,
+          salesToday,
+          salesMonth,
+          orders: totalOrders,
+          products: Number(counts.total_products || 0),
+          customers: Number(counts.total_customers || 0),
+          avgOrderValue: revOrdersCount > 0 ? Math.round(totalSales / revOrdersCount) : 0,
+        },
+        statusCounts,
+        paymentCounts,
+        lowStock,
+        outOfStock,
+        recentOrders,
+        recentCustomers,
+        bestSellers,
+        salesByDay,
+        notifications,
       };
-    });
-
-    const lowStock: DashboardProduct[] = [];
-    const outOfStock: DashboardProduct[] = [];
-    for (const p of products as any[]) {
-      if (!p.is_active) continue;
-      const available = Number(p.stock_quantity || 0) - Number(p.reserved_stock || 0);
-      const threshold = Number(p.low_stock_threshold || 2);
-      const prod: DashboardProduct = {
-        id: p.id,
-        name: p.name,
-        stock_quantity: Number(p.stock_quantity || 0),
-        reserved_stock: Number(p.reserved_stock || 0),
-        low_stock_threshold: threshold,
-        is_active: p.is_active,
+    } catch (err) {
+      console.error("[Admin Dashboard] error:", err);
+      return {
+        currency: "INR",
+        totals: {
+          sales: 0,
+          salesToday: 0,
+          salesMonth: 0,
+          orders: 0,
+          products: 0,
+          customers: 0,
+          avgOrderValue: 0,
+        },
+        statusCounts: {},
+        paymentCounts: {},
+        lowStock: [],
+        outOfStock: [],
+        recentOrders: [],
+        recentCustomers: [],
+        bestSellers: [],
+        salesByDay: Array.from(daysMap.entries()).map(([date]) => ({
+          date,
+          revenue: 0,
+          orders: 0,
+        })),
+        notifications: [],
       };
-      if (available <= 0) outOfStock.push(prod);
-      else if (available <= threshold) lowStock.push(prod);
     }
-
-    const recentOrders: DashboardOrder[] = (orders as any[]).slice(0, 10).map((o) => ({
-      id: o.id,
-      order_number: o.order_number,
-      created_at: new Date(o.created_at).toISOString(),
-      total_amount: Number(o.total_amount || 0),
-      currency: o.currency || "INR",
-      status: o.status || "Pending",
-      payment_status: o.payment_status || "Pending",
-      shipping_name: o.shipping_name || "",
-      shipping_email: o.shipping_email || "",
-    }));
-
-    const notifications: AdminNotification[] = [];
-    for (const o of (orders as any[]).slice(0, 5)) {
-      notifications.push({
-        kind: "order",
-        title: `New Order ${o.order_number}`,
-        detail: `${o.shipping_name || "Customer"} placed an order worth ₹${o.total_amount}`,
-        at: new Date(o.created_at).toISOString(),
-      });
-    }
-
-    for (const p of outOfStock.slice(0, 5)) {
-      notifications.push({
-        kind: "out_of_stock",
-        title: `Out of Stock: ${p.name}`,
-        detail: `0 units remaining in stock`,
-        at: null,
-      });
-    }
-
-    const salesTotal = sum(revenueOrders);
-    const salesToday = sum(
-      revenueOrders.filter((o: any) => new Date(o.created_at).getTime() >= startOfDay),
-    );
-    const salesMonth = sum(
-      revenueOrders.filter((o: any) => new Date(o.created_at).getTime() >= startOfMonth),
-    );
-
-    return {
-      currency,
-      totals: {
-        sales: salesTotal,
-        salesToday,
-        salesMonth,
-        orders: orders.length,
-        products: products.length,
-        customers: profiles.length,
-        avgOrderValue: revenueOrders.length ? Math.round(salesTotal / revenueOrders.length) : 0,
-      },
-      statusCounts,
-      paymentCounts,
-      lowStock,
-      outOfStock,
-      recentOrders,
-      recentCustomers,
-      bestSellers,
-      salesByDay,
-      notifications,
-    };
   });
 
 export const adminAuditLog = createServerFn({ method: "GET" })
@@ -272,12 +331,12 @@ export const adminAuditLog = createServerFn({ method: "GET" })
         details: any;
       }>
     > => {
-      assertAdmin(context);
+      await assertAdmin(context);
       try {
         const sql = getSql();
         const rows = await sql`
         SELECT id, created_at, actor_email, action, entity_type, entity_id, details
-        FROM admin_audit_logs
+        FROM admin_audit_log
         ORDER BY created_at DESC
         LIMIT 100
       `;

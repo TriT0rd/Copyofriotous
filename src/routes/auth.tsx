@@ -1,11 +1,15 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { isAdminEmail } from "@/lib/auth";
 import { toast } from "sonner";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import { BrandName } from "@/components/brand-name";
 
 export const Route = createFileRoute("/auth")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Sign In · RIOTOUS" },
@@ -25,7 +29,8 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
-  const { user, signIn, signUp } = useAuth();
+  const search = Route.useSearch();
+  const { user, loading: authLoading, signIn, signUp } = useAuth();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,21 +39,55 @@ function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (user) navigate({ to: "/" });
-  }, [user, navigate]);
+    if (user && !authLoading) {
+      if (search?.redirect) {
+        navigate({ to: search.redirect as any });
+      } else if (user.role === "admin" || isAdminEmail(user.email)) {
+        navigate({ to: "/admin" });
+      } else {
+        navigate({ to: "/" });
+      }
+    }
+  }, [user, authLoading, navigate, search?.redirect]);
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
       if (mode === "signup") {
-        await signUp(email, password, fullName);
+        const res = await signUp(email, password, fullName);
+        if (!res.ok) {
+          toast.error(res.error || "Registration failed");
+          return;
+        }
         toast.success("Account created successfully. Welcome to RIOTOUS!");
-        navigate({ to: "/" });
+        const isAdmin =
+          res.session?.user?.role === "admin" || isAdminEmail(res.session?.user?.email);
+
+        if (search?.redirect) {
+          navigate({ to: search.redirect as any });
+        } else if (isAdmin) {
+          navigate({ to: "/admin" });
+        } else {
+          navigate({ to: "/" });
+        }
       } else {
-        await signIn(email, password);
+        const res = await signIn(email, password);
+        if (!res.ok) {
+          toast.error(res.error || "Invalid email or password.");
+          return;
+        }
         toast.success("Welcome back.");
-        navigate({ to: "/" });
+        const isAdmin =
+          res.session?.user?.role === "admin" || isAdminEmail(res.session?.user?.email);
+
+        if (search?.redirect) {
+          navigate({ to: search.redirect as any });
+        } else if (isAdmin) {
+          navigate({ to: "/admin" });
+        } else {
+          navigate({ to: "/" });
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");

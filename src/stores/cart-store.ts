@@ -88,12 +88,15 @@ export const useCartStore = create<CartStore>()(
       addItem: async (item) => {
         set({ isLoading: true });
         try {
-          const existing = get().items.find((i) => i.variantId === item.variantId);
+          const currentItems = Array.isArray(get().items) ? get().items : [];
+          const existing = currentItems.find((i) => i?.variantId === item?.variantId);
           const items = existing
-            ? get().items.map((i) =>
-                i.variantId === item.variantId ? { ...i, quantity: i.quantity + item.quantity } : i,
+            ? currentItems.map((i) =>
+                i?.variantId === item?.variantId
+                  ? { ...i, quantity: (Number(i?.quantity) || 0) + (Number(item?.quantity) || 1) }
+                  : i,
               )
-            : [...get().items, item];
+            : [...currentItems, item];
           set({ items });
           await persistRemote(items);
         } finally {
@@ -103,13 +106,17 @@ export const useCartStore = create<CartStore>()(
 
       updateQuantity: async (variantId, quantity) => {
         if (quantity <= 0) return get().removeItem(variantId);
-        const items = get().items.map((i) => (i.variantId === variantId ? { ...i, quantity } : i));
+        const currentItems = Array.isArray(get().items) ? get().items : [];
+        const items = currentItems.map((i) =>
+          i?.variantId === variantId ? { ...i, quantity } : i,
+        );
         set({ items });
         await persistRemote(items);
       },
 
       removeItem: async (variantId) => {
-        const items = get().items.filter((i) => i.variantId !== variantId);
+        const currentItems = Array.isArray(get().items) ? get().items : [];
+        const items = currentItems.filter((i) => i?.variantId !== variantId);
         set({ items });
         await persistRemote(items);
       },
@@ -137,18 +144,20 @@ export const useCartStore = create<CartStore>()(
             }
             return [] as CartItem[];
           });
-          const local = get().items;
+          const safeRemote = Array.isArray(remote) ? remote : [];
+          const local = Array.isArray(get().items) ? get().items : [];
           if (local.length === 0) {
-            set({ items: remote || [] });
+            set({ items: safeRemote });
             return;
           }
-          const merged = [...(remote || [])];
+          const merged = [...safeRemote];
           for (const item of local) {
-            const idx = merged.findIndex((i) => i.variantId === item.variantId);
+            if (!item?.variantId) continue;
+            const idx = merged.findIndex((i) => i?.variantId === item.variantId);
             if (idx >= 0)
               merged[idx] = {
                 ...merged[idx],
-                quantity: Math.max(merged[idx].quantity, item.quantity),
+                quantity: Math.max(Number(merged[idx]?.quantity) || 1, Number(item?.quantity) || 1),
               };
             else merged.push(item);
           }
@@ -162,13 +171,27 @@ export const useCartStore = create<CartStore>()(
         }
       },
 
-      subtotal: () => get().items.reduce((s, i) => s + parseFloat(i.price.amount) * i.quantity, 0),
-      totalItems: () => get().items.reduce((s, i) => s + i.quantity, 0),
+      subtotal: () => {
+        const list = Array.isArray(get().items) ? get().items : [];
+        return list.reduce(
+          (s, i) => s + (parseFloat(i?.price?.amount || "0") || 0) * (Number(i?.quantity) || 0),
+          0,
+        );
+      },
+      totalItems: () => {
+        const list = Array.isArray(get().items) ? get().items : [];
+        return list.reduce((s, i) => s + (Number(i?.quantity) || 0), 0);
+      },
     }),
     {
       name: "riotus-cart",
       storage: createJSONStorage(() => safeStorage),
-      partialize: (s) => ({ items: s.items }),
+      partialize: (s) => ({ items: Array.isArray(s?.items) ? s.items : [] }),
+      onRehydrateStorage: () => (state) => {
+        if (state && !Array.isArray(state.items)) {
+          state.items = [];
+        }
+      },
     },
   ),
 );

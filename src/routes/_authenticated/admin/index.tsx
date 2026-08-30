@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { adminDashboard } from "@/lib/admin-dashboard.functions";
+import { AdminDashboardSkeleton } from "@/components/admin/admin-skeletons";
 import { money, dateTime, STATUS_TONE } from "@/components/admin/format";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, IndianRupee, Package, Receipt, Users } from "lucide-react";
@@ -47,18 +48,30 @@ function Dashboard() {
   const q = useQuery({
     queryKey: ["admin", "dashboard"],
     queryFn: () => dashFn(),
+    staleTime: 30_000,
     refetchInterval: 60_000,
   });
 
-  if (q.isLoading) return <p className="text-muted-foreground">Loading dashboard…</p>;
+  if (q.isLoading) return <AdminDashboardSkeleton />;
   if (q.isError)
     return (
-      <p className="text-destructive">
-        {(q.error as Error)?.message ?? "Could not load dashboard"}
-      </p>
+      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-6 text-center">
+        <p className="text-destructive font-medium">
+          {(q.error as Error)?.message ?? "Could not load dashboard"}
+        </p>
+        <button
+          onClick={() => q.refetch()}
+          className="mt-3 px-4 py-1.5 text-xs font-semibold bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity"
+        >
+          Retry
+        </button>
+      </div>
     );
-  const d = q.data!;
-  const cur = d.currency;
+  if (!q.data) {
+    return <p className="text-muted-foreground">No dashboard data available</p>;
+  }
+  const d = q.data;
+  const cur = d.currency || "INR";
 
   return (
     <div className="space-y-8">

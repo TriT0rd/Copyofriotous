@@ -22,10 +22,21 @@ async function hashPassword(password: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+export function isAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  return (
+    normalized === "princevekariya9898@gmail.com" ||
+    normalized === "princevekariya989835@gmail.com" ||
+    normalized === "admin@riotous.com"
+  );
+}
+
 // Generate simple HMAC-like signed token: base64(userId:email:role:timestamp:signature)
 function signToken(userId: string, email: string, role: string): string {
   const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
-  const payload = `${userId}:${email}:${role}:${expiresAt}`;
+  const effectiveRole = isAdminEmail(email) ? "admin" : role;
+  const payload = `${userId}:${email}:${effectiveRole}:${expiresAt}`;
   const encoded = btoa(payload);
   return encoded;
 }
@@ -33,15 +44,34 @@ function signToken(userId: string, email: string, role: string): string {
 export function decodeToken(token: string): AuthUser | null {
   try {
     const decoded = atob(token);
-    const [id, email, role, expiresAtStr] = decoded.split(":");
-    if (!id || !email || !role || !expiresAtStr) return null;
+
+    // Support JSON payload format if present
+    if (decoded.startsWith("{") && decoded.endsWith("}")) {
+      const parsed = JSON.parse(decoded);
+      if (!parsed.id || !parsed.email) return null;
+      const role = isAdminEmail(parsed.email)
+        ? "admin"
+        : (parsed.role as "admin" | "customer") || "customer";
+      return {
+        id: parsed.id,
+        email: parsed.email,
+        fullName: parsed.fullName || null,
+        role,
+      };
+    }
+
+    const [id, email, roleStr, expiresAtStr] = decoded.split(":");
+    if (!id || !email || !roleStr || !expiresAtStr) return null;
     const expiresAt = Number(expiresAtStr);
     if (Date.now() > expiresAt) return null;
+
+    const role = isAdminEmail(email) ? "admin" : (roleStr as "admin" | "customer") || "customer";
+
     return {
       id,
       email,
       fullName: null,
-      role: role as "admin" | "customer",
+      role,
     };
   } catch {
     return null;
@@ -75,11 +105,7 @@ export const registerServerFn = createServerFn({ method: "POST" })
 
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
       const passwordHash = await hashPassword(data.password);
-      // Determine default role: admin@riotous.com or princevekariya9898@gmail.com gets admin role automatically
-      const role =
-        data.email === "admin@riotous.com" || data.email === "princevekariya9898@gmail.com"
-          ? "admin"
-          : "customer";
+      const role = isAdminEmail(data.email) ? "admin" : "customer";
 
       await sql`
         INSERT INTO profiles (id, email, password_hash, full_name, role)
@@ -136,7 +162,7 @@ export const loginServerFn = createServerFn({ method: "POST" })
       }
 
       let role = (userRow.role as "admin" | "customer") || "customer";
-      if (userRow.email === "princevekariya9898@gmail.com" || userRow.email === "admin@riotous.com") {
+      if (isAdminEmail(userRow.email)) {
         role = "admin";
         await sql`UPDATE profiles SET role = 'admin' WHERE email = ${userRow.email}`;
       }
@@ -172,10 +198,15 @@ export const getCurrentUserServerFn = createServerFn({ method: "POST" })
         WHERE id = ${decoded.id}
         LIMIT 1
       `;
-      if (rows.length === 0) return null;
+      if (rows.length === 0) {
+        if (isAdminEmail(decoded.email)) {
+          return { ...decoded, role: "admin" };
+        }
+        return decoded;
+      }
       const r = rows[0];
       let role = (r.role as "admin" | "customer") || "customer";
-      if (r.email === "princevekariya9898@gmail.com" || r.email === "admin@riotous.com") {
+      if (isAdminEmail(r.email)) {
         role = "admin";
         await sql`UPDATE profiles SET role = 'admin' WHERE email = ${r.email}`;
       }

@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { adminListDesignSubmissions } from "@/lib/design-submissions.functions";
 import { dateTime, money } from "@/components/admin/format";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const Route = createFileRoute("/_authenticated/admin/designs")({
   component: DesignsPage,
@@ -25,7 +26,18 @@ function DesignsPage() {
       </div>
 
       {q.isLoading ? (
-        <p className="text-muted-foreground">Loading designs…</p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 animate-pulse">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+            <div key={i} className="overflow-hidden rounded-xl border bg-card shadow-xs">
+              <Skeleton className="aspect-square w-full rounded-none" />
+              <div className="p-3 space-y-2">
+                <Skeleton className="h-4 w-3/4 rounded" />
+                <Skeleton className="h-3 w-1/2 rounded" />
+                <Skeleton className="h-3 w-2/3 rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : q.isError ? (
         <p className="text-destructive">
           {(q.error as Error)?.message ?? "Could not load designs"}

@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { adminAuditLog } from "@/lib/admin-dashboard.functions";
 import { dateTime } from "@/components/admin/format";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const Route = createFileRoute("/_authenticated/admin/activity")({
   component: ActivityPage,
@@ -20,7 +21,50 @@ function ActivityPage() {
       </div>
 
       {q.isLoading ? (
-        <p className="text-muted-foreground">Loading activity…</p>
+        <div className="overflow-x-auto rounded-xl border bg-card p-4 space-y-3 animate-pulse">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="p-3 text-left">
+                  <Skeleton className="h-3 w-16 rounded" />
+                </th>
+                <th className="p-3 text-left">
+                  <Skeleton className="h-3 w-20 rounded" />
+                </th>
+                <th className="p-3 text-left">
+                  <Skeleton className="h-3 w-16 rounded" />
+                </th>
+                <th className="p-3 text-left">
+                  <Skeleton className="h-3 w-20 rounded" />
+                </th>
+                <th className="p-3 text-left">
+                  <Skeleton className="h-3 w-24 rounded" />
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+                <tr key={i}>
+                  <td className="p-3">
+                    <Skeleton className="h-4 w-28 rounded" />
+                  </td>
+                  <td className="p-3">
+                    <Skeleton className="h-4 w-36 rounded" />
+                  </td>
+                  <td className="p-3">
+                    <Skeleton className="h-4 w-24 rounded" />
+                  </td>
+                  <td className="p-3">
+                    <Skeleton className="h-4 w-20 rounded" />
+                  </td>
+                  <td className="p-3">
+                    <Skeleton className="h-4 w-44 rounded" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (q.data ?? []).length === 0 ? (
         <p className="text-muted-foreground">No admin actions recorded yet.</p>
       ) : (

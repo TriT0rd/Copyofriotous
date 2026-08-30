@@ -669,23 +669,18 @@ Overall Goal
 
 Create a premium Shopify store that feels like an Apple product launch combined with a luxury fashion brand. Every page should emphasize white space, premium typography, cinematic imagery, smooth interactions, and an effortless shopping experience. The website should inspire trust, showcase high-quality DTF printing, simplify custom T-shirt creation, and maximize conversions while remaining fast, responsive, and easy to manage in Shopify.
 
-This project was built with [Lovable](https://lovable.dev).
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/7d67c8d8-e0bb-4eba-9231-140b446ff2d3).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
 ## Development
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+To run this project locally:
 
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
+npm install
 npm run dev
+```
+
+To build for production:
+
+```sh
+npm run build
+npm start
 ```

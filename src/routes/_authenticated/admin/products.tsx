@@ -16,6 +16,7 @@ import { money } from "@/components/admin/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/admin/products")({
@@ -180,7 +181,32 @@ function ProductsPage() {
       </div>
 
       {productsQ.isLoading ? (
-        <p className="text-muted-foreground">Loading products…</p>
+        <div className="space-y-3 animate-pulse">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div
+              key={i}
+              className="flex flex-col gap-4 rounded-xl border bg-card p-4 lg:flex-row lg:items-center justify-between shadow-xs"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-4">
+                <Skeleton className="h-16 w-16 shrink-0 rounded-md" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-5 w-48 rounded" />
+                  <Skeleton className="h-3.5 w-36 rounded" />
+                  <div className="flex gap-1.5 pt-1">
+                    <Skeleton className="h-4 w-8 rounded-full" />
+                    <Skeleton className="h-4 w-8 rounded-full" />
+                    <Skeleton className="h-4 w-12 rounded-full" />
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Skeleton className="h-8 w-20 rounded-md" />
+                <Skeleton className="h-8 w-16 rounded-md" />
+                <Skeleton className="h-8 w-8 rounded-md" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : productsQ.isError ? (
         <p className="text-destructive">
           {(productsQ.error as Error)?.message ?? "Could not load products"}

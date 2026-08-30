@@ -15,6 +15,7 @@ import {
 import { CartDrawer } from "./cart-drawer";
 import { useCartStore } from "@/stores/cart-store";
 import { useAuth } from "@/hooks/use-auth";
+import { isAdminEmail } from "@/lib/auth";
 import { BrandName } from "@/components/brand-name";
 import riotousLogo from "@/assets/riotous-logo.png";
 import {
@@ -39,10 +40,7 @@ export function SiteHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const isAdmin =
-    user?.role === "admin" ||
-    user?.email === "princevekariya9898@gmail.com" ||
-    user?.email === "admin@riotous.com";
+  const isAdmin = user?.role === "admin" || isAdminEmail(user?.email);
   useCartStore((s) => s.items.length); // subscribe so header re-renders
 
   useEffect(() => {

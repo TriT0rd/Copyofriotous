@@ -10,8 +10,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
+import { isAdminEmail } from "@/lib/auth";
 import { checkIsAdmin } from "@/lib/admin.functions";
 import { adminDashboard } from "@/lib/admin-dashboard.functions";
+import { AdminLayoutSkeleton } from "@/components/admin/admin-skeletons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -78,16 +80,30 @@ function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [term, setTerm] = useState("");
 
+  const isExplicitAdmin = user.role === "admin" || isAdminEmail(user.email);
+
   const roleQ = useQuery({
     queryKey: ["is-admin", user.id],
-    queryFn: () => isAdminFn(),
-    staleTime: 0,
+    queryFn: async () => {
+      if (isExplicitAdmin) return true;
+      const token = typeof window !== "undefined" ? localStorage.getItem("riotous_session") : null;
+      try {
+        const isAdm = await isAdminFn({ data: { token: token || undefined } });
+        return Boolean(isAdm || isExplicitAdmin);
+      } catch {
+        return Boolean(isExplicitAdmin);
+      }
+    },
+    initialData: isExplicitAdmin ? true : undefined,
+    staleTime: Infinity,
     retry: 1,
   });
+
   const dashQ = useQuery({
     queryKey: ["admin", "dashboard"],
     queryFn: () => dashFn(),
-    enabled: !!roleQ.data,
+    enabled: roleQ.data !== false,
+    staleTime: 30_000,
     refetchInterval: 60_000,
   });
 
@@ -100,12 +116,10 @@ function AdminLayout() {
     navigate({ to: "/auth", replace: true });
   }
 
-  if (roleQ.isLoading) {
-    return (
-      <div className="container py-32 text-center text-muted-foreground">Checking access…</div>
-    );
+  if (roleQ.isLoading && !isExplicitAdmin) {
+    return <AdminLayoutSkeleton />;
   }
-  if (roleQ.isError) {
+  if (roleQ.isError && !isExplicitAdmin) {
     return (
       <div className="container py-32 text-center">
         <h1 className="text-3xl font-bold">Could not verify access</h1>
@@ -118,7 +132,7 @@ function AdminLayout() {
       </div>
     );
   }
-  if (roleQ.data === false) {
+  if (roleQ.data === false && !isExplicitAdmin) {
     return (
       <div className="container py-32 text-center">
         <h1 className="text-3xl font-bold">Access denied</h1>
@@ -143,7 +157,10 @@ function AdminLayout() {
           activeOptions={item.exact ? { exact: true } : undefined}
           onClick={() => setSidebarOpen(false)}
           className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          activeProps={{ className: "bg-brand-red text-white hover:bg-brand-red hover:text-white" }}
+          activeProps={{
+            className:
+              "!bg-brand-red !text-white hover:!bg-brand-red hover:!text-white font-semibold",
+          }}
         >
           <item.icon className="h-4 w-4" />
           {item.label}

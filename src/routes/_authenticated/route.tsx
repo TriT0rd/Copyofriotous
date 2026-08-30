@@ -1,24 +1,50 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { decodeToken } from "@/lib/auth";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
     try {
-      const sessionStr = localStorage.getItem("riotous_session");
-      if (!sessionStr) throw redirect({ to: "/auth" });
-      const [payloadStr] = sessionStr.split(".");
-      const payload = JSON.parse(atob(payloadStr));
-      if (!payload?.id) throw redirect({ to: "/auth" });
+      const sessionStr =
+        typeof window !== "undefined" ? localStorage.getItem("riotous_session") : null;
+      if (!sessionStr) {
+        throw redirect({
+          to: "/auth",
+          search: {
+            redirect: location.pathname !== "/auth" ? location.pathname : undefined,
+          },
+        });
+      }
+
+      const user = decodeToken(sessionStr);
+      if (!user?.id) {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("riotous_session");
+        }
+        throw redirect({
+          to: "/auth",
+          search: {
+            redirect: location.pathname !== "/auth" ? location.pathname : undefined,
+          },
+        });
+      }
+
       return {
         user: {
-          id: payload.id,
-          email: payload.email,
-          role: payload.role,
-          user_metadata: { full_name: payload.fullName },
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          user_metadata: { full_name: user.fullName },
         },
       };
-    } catch {
-      throw redirect({ to: "/auth" });
+    } catch (err: any) {
+      if (err?.isRedirect || err?.to) throw err;
+      throw redirect({
+        to: "/auth",
+        search: {
+          redirect: location.pathname !== "/auth" ? location.pathname : undefined,
+        },
+      });
     }
   },
   component: () => <Outlet />,
