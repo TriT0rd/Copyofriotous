@@ -1,0 +1,11 @@
+# RIOTOUS
+
+> RIOTOUS is a premium DTF-printed streetwear label made in India, offering oversized tees, graphic apparel and a studio to design your own print.
+
+## Pages
+
+- [Home](/): Featured drops, categories and the RIOTOUS brand story.
+- [Shop](/shop): Full catalogue of DTF printed tees and streetwear.
+- [Design Your Own](/design): Studio to upload artwork and preview it on front and back of a tee.
+- [About](/about): How RIOTOUS prints, and what the brand stands for.
+- [Contact](/contact): Email, WhatsApp and Instagram support, studio hours Mon–Sat 10:00–19:00 IST.

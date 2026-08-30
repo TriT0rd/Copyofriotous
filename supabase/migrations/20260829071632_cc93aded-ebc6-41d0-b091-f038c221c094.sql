@@ -1,0 +1,1 @@
+ALTER TABLE public.design_submissions ADD COLUMN IF NOT EXISTS preview_images jsonb NOT NULL DEFAULT '{}'::jsonb;

@@ -1,0 +1,6 @@
+{
+  "name": "RIOTUS",
+  "description": "Premium streetwear storefront and live custom t-shirt design studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

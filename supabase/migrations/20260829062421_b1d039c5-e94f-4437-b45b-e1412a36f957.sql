@@ -1,0 +1,2 @@
+DROP POLICY IF EXISTS "Customers create own verified reviews" ON public.reviews;
+CREATE POLICY "Customers create own reviews" ON public.reviews FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
