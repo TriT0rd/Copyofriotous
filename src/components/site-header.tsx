@@ -13,6 +13,7 @@ import {
   Star,
 } from "lucide-react";
 import { CartDrawer } from "./cart-drawer";
+import { SearchDialog } from "./search-dialog";
 import { useCartStore } from "@/stores/cart-store";
 import { useAuth } from "@/hooks/use-auth";
 import { isAdminEmail } from "@/lib/auth";
@@ -38,6 +39,7 @@ const nav = [
 export function SiteHeader() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === "admin" || isAdminEmail(user?.email);
@@ -48,6 +50,17 @@ export function SiteHeader() {
     on();
     window.addEventListener("scroll", on, { passive: true });
     return () => window.removeEventListener("scroll", on);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   async function handleSignOut() {
@@ -63,6 +76,8 @@ export function SiteHeader() {
 
   return (
     <>
+      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+
       <header
         className={`fixed inset-x-0 top-0 z-50 flex justify-center pointer-events-none transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           scrolled
@@ -112,13 +127,15 @@ export function SiteHeader() {
           </nav>
 
           <div className="flex shrink-0 items-center gap-1 transition-all duration-300">
-            <Link
-              to="/shop"
-              className="hidden h-9 w-9 md:h-10 md:w-10 items-center justify-center rounded-full text-white transition-colors duration-200 hover:bg-brand-red hover:text-white md:flex"
-              aria-label="Search"
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="flex h-9 w-9 md:h-10 md:w-10 items-center justify-center rounded-full text-white transition-colors duration-200 hover:bg-brand-red hover:text-white cursor-pointer"
+              aria-label="Search collection"
+              title="Search products (Cmd+K)"
             >
               <Search className="h-5 w-5" />
-            </Link>
+            </button>
             {user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -208,6 +225,18 @@ export function SiteHeader() {
             </button>
           </div>
           <nav className="flex flex-col gap-1 px-6 pt-4 overflow-y-auto max-h-[calc(100vh-80px)]">
+            <button
+              type="button"
+              onClick={() => {
+                setMobileOpen(false);
+                setSearchOpen(true);
+              }}
+              className="flex items-center gap-3 w-full border border-border/80 bg-white/5 rounded-xl px-4 py-3 text-left text-base font-medium text-white/80 hover:bg-white/10 transition-colors mb-2 cursor-pointer"
+            >
+              <Search className="h-5 w-5 text-brand-red" />
+              <span>Search products…</span>
+            </button>
+
             {nav.map((n) => (
               <Link
                 key={n.to}

@@ -217,13 +217,30 @@ function AdminLayout() {
                 navigate({ to: "/admin/orders", search: { q: term.trim() } });
               }}
             >
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <button
+                type="submit"
+                className="absolute left-1.5 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer rounded-full"
+                aria-label="Submit search"
+                title="Search orders & customers"
+              >
+                <Search className="h-4 w-4" />
+              </button>
               <Input
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
                 placeholder="Search orders, customers…"
-                className="h-9 pl-9"
+                className="h-9 pl-9 pr-8"
               />
+              {term && (
+                <button
+                  type="button"
+                  onClick={() => setTerm("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  aria-label="Clear search text"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </form>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
