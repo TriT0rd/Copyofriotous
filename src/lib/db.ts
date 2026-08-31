@@ -54,9 +54,8 @@ export async function ensureDbSchema() {
     try {
       const sql = getSql();
 
-      // Execute core schema creation in consolidated fast batches
-      await sql`
-        CREATE TABLE IF NOT EXISTS profiles (
+      const schemaStatements = [
+        `CREATE TABLE IF NOT EXISTS profiles (
           id TEXT PRIMARY KEY,
           email TEXT UNIQUE NOT NULL,
           password_hash TEXT NOT NULL,
@@ -64,17 +63,15 @@ export async function ensureDbSchema() {
           role TEXT NOT NULL DEFAULT 'customer',
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS categories (
+        )`,
+        `CREATE TABLE IF NOT EXISTS categories (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           slug TEXT UNIQUE NOT NULL,
           description TEXT,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS products (
+        )`,
+        `CREATE TABLE IF NOT EXISTS products (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           slug TEXT UNIQUE NOT NULL,
@@ -92,9 +89,8 @@ export async function ensureDbSchema() {
           tags JSONB NOT NULL DEFAULT '[]'::jsonb,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS product_variants (
+        )`,
+        `CREATE TABLE IF NOT EXISTS product_variants (
           id TEXT PRIMARY KEY,
           product_id TEXT,
           size TEXT,
@@ -105,9 +101,8 @@ export async function ensureDbSchema() {
           low_stock_threshold INTEGER NOT NULL DEFAULT 2,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS orders (
+        )`,
+        `CREATE TABLE IF NOT EXISTS orders (
           id TEXT PRIMARY KEY,
           user_id TEXT,
           order_number TEXT UNIQUE NOT NULL,
@@ -136,9 +131,8 @@ export async function ensureDbSchema() {
           admin_notes TEXT,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS order_items (
+        )`,
+        `CREATE TABLE IF NOT EXISTS order_items (
           id TEXT PRIMARY KEY,
           order_id TEXT,
           product_id TEXT,
@@ -152,9 +146,8 @@ export async function ensureDbSchema() {
           selected_color TEXT,
           subtotal NUMERIC NOT NULL DEFAULT 0,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS addresses (
+        )`,
+        `CREATE TABLE IF NOT EXISTS addresses (
           id TEXT PRIMARY KEY,
           user_id TEXT,
           name TEXT,
@@ -166,9 +159,8 @@ export async function ensureDbSchema() {
           phone TEXT,
           is_default BOOLEAN NOT NULL DEFAULT false,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS reviews (
+        )`,
+        `CREATE TABLE IF NOT EXISTS reviews (
           id TEXT PRIMARY KEY,
           product_id TEXT,
           user_id TEXT,
@@ -181,9 +173,8 @@ export async function ensureDbSchema() {
           images JSONB NOT NULL DEFAULT '[]'::jsonb,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS returns (
+        )`,
+        `CREATE TABLE IF NOT EXISTS returns (
           id TEXT PRIMARY KEY,
           return_number TEXT UNIQUE NOT NULL,
           order_id TEXT,
@@ -197,16 +188,14 @@ export async function ensureDbSchema() {
           items JSONB,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS return_settings (
+        )`,
+        `CREATE TABLE IF NOT EXISTS return_settings (
           id TEXT PRIMARY KEY DEFAULT 'default',
           window_days INTEGER NOT NULL DEFAULT 7,
           require_delivered BOOLEAN NOT NULL DEFAULT true,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS design_submissions (
+        )`,
+        `CREATE TABLE IF NOT EXISTS design_submissions (
           id TEXT PRIMARY KEY,
           user_id TEXT,
           customer_name TEXT,
@@ -222,9 +211,8 @@ export async function ensureDbSchema() {
           emailed_at TIMESTAMP WITH TIME ZONE,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS favorites (
+        )`,
+        `CREATE TABLE IF NOT EXISTS favorites (
           id TEXT PRIMARY KEY,
           user_id TEXT,
           product_handle TEXT NOT NULL,
@@ -233,16 +221,14 @@ export async function ensureDbSchema() {
           product_image TEXT,
           product_currency TEXT DEFAULT 'INR',
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS carts (
+        )`,
+        `CREATE TABLE IF NOT EXISTS carts (
           user_id TEXT PRIMARY KEY,
           items JSONB NOT NULL DEFAULT '[]'::jsonb,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS admin_audit_log (
+        )`,
+        `CREATE TABLE IF NOT EXISTS admin_audit_log (
           id TEXT PRIMARY KEY,
           actor_id TEXT,
           actor_email TEXT,
@@ -251,9 +237,8 @@ export async function ensureDbSchema() {
           entity_id TEXT,
           details JSONB DEFAULT '{}'::jsonb,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS return_notifications (
+        )`,
+        `CREATE TABLE IF NOT EXISTS return_notifications (
           id TEXT PRIMARY KEY,
           return_id TEXT,
           event TEXT,
@@ -264,27 +249,87 @@ export async function ensureDbSchema() {
           attempts INTEGER DEFAULT 0,
           sent_at TIMESTAMP WITH TIME ZONE,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-      `;
+        )`,
+        `CREATE TABLE IF NOT EXISTS inventory_transactions (
+          id TEXT PRIMARY KEY,
+          product_id TEXT,
+          variant_id TEXT,
+          order_id TEXT,
+          quantity_change INTEGER NOT NULL,
+          previous_quantity INTEGER NOT NULL,
+          new_quantity INTEGER NOT NULL,
+          transaction_type TEXT NOT NULL,
+          reason TEXT,
+          created_by TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status)`,
+        `CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders (user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items (order_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_profiles_created_at ON profiles (created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_products_is_active ON products (is_active)`,
+        `CREATE INDEX IF NOT EXISTS idx_product_variants_product_id ON product_variants (product_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_reviews_product_id ON reviews (product_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_favorites_user_id ON favorites (user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_inv_tx_product ON inventory_transactions (product_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_inv_tx_variant ON inventory_transactions (variant_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_inv_tx_order ON inventory_transactions (order_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_inv_tx_created ON inventory_transactions (created_at DESC)`,
+        `UPDATE profiles SET role = 'admin' WHERE email IN ('princevekariya9898@gmail.com', 'princevekariya989835@gmail.com', 'admin@riotous.com')`,
+        `INSERT INTO return_settings (id, window_days, require_delivered) VALUES ('default', 7, true) ON CONFLICT (id) DO NOTHING`,
+        `ALTER TABLE order_items DROP CONSTRAINT IF EXISTS order_items_order_id_fkey`,
+        `ALTER TABLE order_items DROP CONSTRAINT IF EXISTS order_items_product_id_fkey`,
+        `ALTER TABLE order_items DROP CONSTRAINT IF EXISTS order_items_product_variant_id_fkey`,
+        `ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_user_id_fkey`,
+        `ALTER TABLE orders ALTER COLUMN id TYPE TEXT USING id::text`,
+        `ALTER TABLE orders ALTER COLUMN user_id TYPE TEXT USING user_id::text`,
+        `ALTER TABLE order_items ALTER COLUMN id TYPE TEXT USING id::text`,
+        `ALTER TABLE order_items ALTER COLUMN order_id TYPE TEXT USING order_id::text`,
+        `ALTER TABLE order_items ALTER COLUMN product_id TYPE TEXT USING product_id::text`,
+        `ALTER TABLE orders ALTER COLUMN shipping_full_name DROP NOT NULL`,
+        `ALTER TABLE orders ALTER COLUMN shipping_phone DROP NOT NULL`,
+        `ALTER TABLE orders ALTER COLUMN shipping_address_line1 DROP NOT NULL`,
+        `ALTER TABLE orders ALTER COLUMN shipping_city DROP NOT NULL`,
+        `ALTER TABLE orders ALTER COLUMN shipping_state DROP NOT NULL`,
+        `ALTER TABLE orders ALTER COLUMN shipping_pincode DROP NOT NULL`,
+        `ALTER TABLE order_items ALTER COLUMN unit_price DROP NOT NULL`,
+        `ALTER TABLE order_items ALTER COLUMN total_price DROP NOT NULL`,
+        `ALTER TABLE order_items ALTER COLUMN product_name DROP NOT NULL`,
+        `ALTER TABLE order_items ALTER COLUMN product_image TYPE TEXT`,
+        `ALTER TABLE order_items ALTER COLUMN product_name TYPE TEXT`,
+        `ALTER TABLE order_items ALTER COLUMN size TYPE TEXT`,
+        `ALTER TABLE order_items ALTER COLUMN color TYPE TEXT`,
+        `ALTER TABLE order_items ALTER COLUMN sku TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN order_number TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN payment_method TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN payment_status TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN razorpay_order_id TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN razorpay_payment_id TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_full_name TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_phone TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_address_line1 TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_address_line2 TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_city TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_state TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN shipping_pincode TYPE TEXT`,
+        `ALTER TABLE orders ALTER COLUMN tracking_number TYPE TEXT`,
+        `ALTER TABLE categories ALTER COLUMN image_url TYPE TEXT`,
+        `ALTER TABLE product_images ALTER COLUMN image_url TYPE TEXT`,
+      ];
 
-      // Add high-performance indexes for fast queries
-      await sql`
-        CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status);
-        CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders (user_id);
-        CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items (order_id);
-        CREATE INDEX IF NOT EXISTS idx_profiles_created_at ON profiles (created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_products_is_active ON products (is_active);
-        CREATE INDEX IF NOT EXISTS idx_product_variants_product_id ON product_variants (product_id);
-        CREATE INDEX IF NOT EXISTS idx_reviews_product_id ON reviews (product_id);
-        CREATE INDEX IF NOT EXISTS idx_favorites_user_id ON favorites (user_id);
-
-        UPDATE profiles SET role = 'admin' WHERE email IN ('princevekariya9898@gmail.com', 'princevekariya989835@gmail.com', 'admin@riotous.com');
-
-        INSERT INTO return_settings (id, window_days, require_delivered)
-        VALUES ('default', 7, true)
-        ON CONFLICT (id) DO NOTHING;
-      `;
+      for (const stmt of schemaStatements) {
+        try {
+          if (typeof (sql as any).query === "function") {
+            await (sql as any).query(stmt);
+          } else {
+            await (sql as any)([stmt]);
+          }
+        } catch (stmtErr) {
+          // Log individual statement issue if any, but continue applying rest
+          console.warn("[Neon DB] schema statement warning:", stmtErr);
+        }
+      }
 
       _schemaInitialized = true;
     } catch (err) {

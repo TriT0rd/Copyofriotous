@@ -1,6 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireAuth } from "@/lib/auth-middleware";
 import { ensureDbSchema, getSql } from "@/lib/db";
+import { sendTemplateEmail } from "@/lib/email-templates/send-email";
+import {
+  deductOrderInventory,
+  restoreOrderInventory,
+  InventoryError,
+} from "@/lib/inventory.service";
 
 export type OrderLineItem = {
   title: string;
@@ -164,13 +170,33 @@ export const placeOrder = createServerFn({ method: "POST" })
     const orderId = `ord_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const orderNumber = `RIO-${Date.now().toString(36).toUpperCase()}`;
 
+    // Atomically check and deduct inventory before finalizing the order
+    try {
+      await deductOrderInventory(
+        orderId,
+        items.map((i) => ({
+          productId: i.productId,
+          productName: i.productName,
+          quantity: i.quantity,
+          selectedSize: i.selectedSize,
+          selectedColor: i.selectedColor,
+        })),
+        String(context.userId),
+      );
+    } catch (err) {
+      if (err instanceof InventoryError) {
+        throw new Error(err.message);
+      }
+      throw new Error("Unable to reserve inventory for your items. Please try again.");
+    }
+
     await sql`
       INSERT INTO orders (
         id, user_id, order_number, subtotal, discount_amount, shipping_charge, tax_amount, total_amount,
-        currency, status, payment_status, payment_method, shipping_name, shipping_email, shipping_phone, shipping_address
+        currency, status, payment_status, payment_method, stock_state, shipping_name, shipping_email, shipping_phone, shipping_address
       ) VALUES (
         ${orderId}, ${String(context.userId)}, ${orderNumber}, ${itemsTotal}, 0, ${shipping}, 0, ${total},
-        ${data.currency}, 'Pending', 'Pending', 'COD', ${data.shippingName}, ${data.shippingEmail}, ${data.shippingPhone}, ${data.shippingAddress}
+        ${data.currency}, 'Pending', 'Pending', 'COD', 'Deducted', ${data.shippingName}, ${data.shippingEmail}, ${data.shippingPhone}, ${data.shippingAddress}
       );
     `;
 
@@ -193,6 +219,19 @@ export const placeOrder = createServerFn({ method: "POST" })
       ON CONFLICT (user_id) DO UPDATE SET items = '[]'::jsonb, updated_at = NOW();
     `;
 
+    // Attempt to notify store admins in background
+    sendTemplateEmail("admin-order-notification", data.shippingEmail, {
+      templateData: {
+        orderId,
+        orderNumber,
+        customerName: data.shippingName,
+        customerEmail: data.shippingEmail,
+        total: `${data.currency} ${total.toLocaleString("en-IN")}`,
+        itemsCount: items.reduce((s, i) => s + i.quantity, 0),
+        placedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+      },
+    }).catch((err) => console.warn("[Order Service] Email notification notice:", err));
+
     return {
       ok: true,
       orderId,
@@ -200,4 +239,28 @@ export const placeOrder = createServerFn({ method: "POST" })
       total,
       shipping,
     };
+  });
+
+export const cancelMyOrder = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d: { orderId: string; reason?: string }) => ({
+    orderId: String(d.orderId),
+    reason: d.reason ? String(d.reason).slice(0, 200) : "Cancelled by customer",
+  }))
+  .handler(async ({ data, context }) => {
+    await ensureDbSchema();
+    const sql = getSql();
+    const rows = await sql`
+      SELECT id, user_id, status, order_number FROM orders
+      WHERE id::text = ${data.orderId} AND user_id::text = ${String(context.userId)}
+      LIMIT 1
+    `;
+    if (rows.length === 0) throw new Error("Order not found");
+    if (["Shipped", "Delivered", "Cancelled", "Returned"].includes(rows[0].status)) {
+      throw new Error(
+        `Order cannot be cancelled because it is already ${rows[0].status.toLowerCase()}`,
+      );
+    }
+    const res = await restoreOrderInventory(data.orderId, data.reason, context.userId);
+    return { ok: true, restored: res.restoredCount, alreadyRestored: res.alreadyRestored };
   });

@@ -95,8 +95,9 @@ function ProductPage() {
 
   const variants = p.variants.edges.map((v) => v.node);
   const [selected, setSelected] = useState<Record<string, string>>(() => {
-    const first = variants[0]?.selectedOptions ?? [];
-    return Object.fromEntries(first.map((o) => [o.name, o.value]));
+    const inStock = variants.find((v) => v.available > 0) ?? variants[0];
+    const opts = inStock?.selectedOptions ?? [];
+    return Object.fromEntries(opts.map((o) => [o.name, o.value]));
   });
   const [qty, setQty] = useState(1);
   const [activeImage, setActiveImage] = useState(0);

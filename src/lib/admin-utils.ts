@@ -49,6 +49,7 @@ export type ProductInput = {
   tags?: string[];
   category?: string;
   stock?: number;
+  sizeStock?: Record<string, number>;
   images?: string[];
   isActive?: boolean;
 };
@@ -67,18 +68,59 @@ export function normalizeProductInput(d: ProductInput) {
   if (!Number.isFinite(price) || price < 0)
     throw new Error("Invalid product data: price must be a number ≥ 0");
 
-  const stock = Math.max(0, Math.round(Number(d.stock) || 0));
+  let sizes = cleanList(d.sizes);
+  if (sizes.length === 0) {
+    sizes = ["S", "M", "L", "XL", "XXL"];
+  }
+
+  const explicitStockSum =
+    d.sizeStock && typeof d.sizeStock === "object"
+      ? Object.values(d.sizeStock).reduce(
+          (sum, v) => sum + Math.max(0, Math.round(Number(v) || 0)),
+          0,
+        )
+      : 0;
+
+  const passedTotalStock = Math.max(0, Math.round(Number(d.stock) || 0));
+  const sizeStock: Record<string, number> = {};
+  let totalStock = 0;
+
+  if (explicitStockSum > 0) {
+    for (const s of sizes) {
+      const q = Math.max(0, Math.round(Number(d.sizeStock?.[s]) || 0));
+      sizeStock[s] = q;
+      totalStock += q;
+    }
+  } else if (passedTotalStock > 0) {
+    totalStock = passedTotalStock;
+    const base = Math.floor(totalStock / sizes.length);
+    const rem = totalStock % sizes.length;
+    sizes.forEach((s, idx) => {
+      sizeStock[s] = base + (idx < rem ? 1 : 0);
+    });
+  } else {
+    totalStock = 0;
+    sizes.forEach((s) => {
+      sizeStock[s] = 0;
+    });
+  }
+
+  // Sanitize images: preserve valid URLs, data URLs, and paths
+  const images = (d.images ?? [])
+    .map((img) => String(img || "").trim())
+    .filter((img) => img.length > 0);
 
   return {
     name: title,
     description: d.description?.trim() ? d.description.trim() : null,
     price,
-    images: cleanList(d.images),
-    sizes: cleanList(d.sizes),
-    colors: cleanList(d.colors),
+    images: images.length > 0 ? images : ["/placeholder-tee.jpg"],
+    sizes,
+    colors: cleanList(d.colors).length > 0 ? cleanList(d.colors) : ["Black"],
     tags: cleanList(d.tags),
-    category: d.category?.trim() ? d.category.trim() : null,
-    stock_quantity: stock,
+    category: d.category?.trim() ? d.category.trim() : "Oversized Tees",
+    stock_quantity: totalStock,
+    sizeStock,
     is_active: d.isActive !== false,
   };
 }
@@ -103,16 +145,16 @@ export async function logAudit(
         ${action},
         ${entityType},
         ${entityId},
-        ${JSON.stringify(details)}
+        ${JSON.stringify(details)}::jsonb
       );
     `;
-  } catch {
-    /* ignore audit failures */
+  } catch (e) {
+    console.warn("[Admin Audit] Notice:", e);
   }
 }
 
 /**
- * Makes sure a product has one inventory row per size/colour combination.
+ * Makes sure a product has one inventory row per size/colour combination and synchronizes stock.
  */
 export async function syncProductVariants(
   context: AdminCtx,
@@ -120,6 +162,7 @@ export async function syncProductVariants(
   sizes: string[],
   colors: string[],
   distributeTotal?: number,
+  sizeStock?: Record<string, number>,
 ) {
   const sql = getSql();
   const s = sizes.length ? sizes : [""];
@@ -128,40 +171,109 @@ export async function syncProductVariants(
   for (const color of c) for (const size of s) desired.push({ size, color });
 
   const existing = await sql`
-    SELECT id, size, color, reserved_stock
+    SELECT id, size, color, stock_quantity, reserved_stock
     FROM product_variants
     WHERE product_id::text = ${String(productId)}
   `;
 
-  const key = (v: { size: string; color: string }) => `${v.size}|${v.color}`;
-  const have = new Set((existing ?? []).map((v: any) => key(v)));
-  const wanted = new Set(desired.map(key));
+  const key = (v: { size: string; color: string }) =>
+    `${(v.size || "").trim()}|${(v.color || "").trim()}`;
+  const existingMap = new Map<string, any>();
+  for (const v of existing ?? []) {
+    existingMap.set(key(v), v);
+  }
 
-  const missing = desired.filter((v) => !have.has(key(v)));
-  if (missing.length) {
-    const total = Math.max(0, Math.round(Number(distributeTotal) || 0));
-    const base = Math.floor(total / missing.length);
-    const rem = total % missing.length;
+  const hasExplicitSizeStock = Boolean(
+    sizeStock &&
+    Object.keys(sizeStock).length > 0 &&
+    Object.values(sizeStock).some((val) => val > 0),
+  );
 
-    for (let i = 0; i < missing.length; i++) {
-      const v = missing[i];
-      const varId = `var_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-      const qty = base + (i < rem ? 1 : 0);
-      await sql`
-        INSERT INTO product_variants (id, product_id, size, color, stock_quantity)
-        VALUES (${varId}, ${String(productId)}, ${v.size}, ${v.color}, ${qty});
-      `;
+  if (hasExplicitSizeStock) {
+    // 1. Explicit per-size allocation
+    for (const item of desired) {
+      const k = key(item);
+      const targetQty = Math.max(0, Math.round(Number(sizeStock![item.size]) || 0));
+      const ex = existingMap.get(k);
+      if (ex) {
+        await sql`
+          UPDATE product_variants
+          SET stock_quantity = ${targetQty}, updated_at = NOW()
+          WHERE id::text = ${String(ex.id)}
+        `;
+      } else {
+        const varId = `var_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        await sql`
+          INSERT INTO product_variants (id, product_id, size, color, stock_quantity)
+          VALUES (${varId}, ${String(productId)}, ${item.size}, ${item.color}, ${targetQty});
+        `;
+      }
+    }
+  } else if (distributeTotal !== undefined && Number(distributeTotal) >= 0) {
+    // 2. Distribute total across desired combinations
+    const total = Math.max(0, Math.round(Number(distributeTotal)));
+    const base = desired.length ? Math.floor(total / desired.length) : 0;
+    const rem = desired.length ? total % desired.length : 0;
+
+    for (let i = 0; i < desired.length; i++) {
+      const item = desired[i];
+      const k = key(item);
+      const targetQty = base + (i < rem ? 1 : 0);
+      const ex = existingMap.get(k);
+      if (ex) {
+        await sql`
+          UPDATE product_variants
+          SET stock_quantity = ${targetQty}, updated_at = NOW()
+          WHERE id::text = ${String(ex.id)}
+        `;
+      } else {
+        const varId = `var_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        await sql`
+          INSERT INTO product_variants (id, product_id, size, color, stock_quantity)
+          VALUES (${varId}, ${String(productId)}, ${item.size}, ${item.color}, ${targetQty});
+        `;
+      }
+    }
+  } else {
+    // 3. Make sure any missing variants exist
+    for (const item of desired) {
+      const k = key(item);
+      if (!existingMap.has(k)) {
+        const varId = `var_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        await sql`
+          INSERT INTO product_variants (id, product_id, size, color, stock_quantity)
+          VALUES (${varId}, ${String(productId)}, ${item.size}, ${item.color}, 0);
+        `;
+      }
     }
   }
 
+  // Safely clean up stale variants that are not desired and have 0 reserved stock & no order references
+  const wanted = new Set(desired.map(key));
   const stale = (existing ?? []).filter(
     (v: any) => !wanted.has(key(v)) && Number(v.reserved_stock || 0) === 0,
   );
   if (stale.length) {
-    const staleIds = stale.map((v: any) => String(v.id));
-    await sql`
-      DELETE FROM product_variants
-      WHERE id::text = ANY(${staleIds}::text[])
-    `;
+    for (const st of stale) {
+      const refs = await sql`
+        SELECT count(*)::int as count FROM order_items WHERE variant_id::text = ${String(st.id)}
+      `;
+      if ((refs[0]?.count ?? 0) === 0) {
+        await sql`DELETE FROM product_variants WHERE id::text = ${String(st.id)}`;
+      }
+    }
   }
+
+  // Sync parent product total stock from sum of variants
+  const varSum = await sql`
+    SELECT COALESCE(SUM(stock_quantity), 0)::int as total
+    FROM product_variants
+    WHERE product_id::text = ${String(productId)}
+  `;
+  const finalTotal = Number(varSum[0]?.total ?? 0);
+  await sql`
+    UPDATE products
+    SET stock_quantity = ${finalTotal}, updated_at = NOW()
+    WHERE id::text = ${String(productId)}
+  `;
 }

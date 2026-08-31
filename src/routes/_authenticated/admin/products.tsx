@@ -71,7 +71,10 @@ function ProductsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const products = productsQ.data ?? [];
+  const products = useMemo(
+    () => (Array.isArray(productsQ.data) ? productsQ.data : []),
+    [productsQ.data],
+  );
   const categories = useMemo(
     () => Array.from(new Set(products.map((p) => p.category).filter(Boolean) as string[])).sort(),
     [products],
@@ -132,6 +135,7 @@ function ProductsPage() {
             sizes: editing.sizes,
             tags: editing.tags.filter((t) => t !== ARCHIVED_TAG),
             stock: String(editing.totalInventory),
+            sizeStock: editing.sizeStock,
             isActive: editing.status === "ACTIVE",
           }}
           onCancel={() => setEditing(null)}

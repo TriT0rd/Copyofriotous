@@ -22,7 +22,7 @@ export function useFavorites() {
     try {
       const token = localStorage.getItem("riotous_session") || "";
       const data = await getMyFavorites({ headers: { Authorization: `Bearer ${token}` } });
-      setFavorites(data || []);
+      setFavorites(Array.isArray(data) ? data : []);
     } catch {
       setFavorites([]);
     }
@@ -34,7 +34,8 @@ export function useFavorites() {
   }, [refresh]);
 
   const isFavorite = useCallback(
-    (handle: string) => favorites.some((f) => f.product_handle === handle),
+    (handle: string) =>
+      Array.isArray(favorites) && favorites.some((f) => f?.product_handle === handle),
     [favorites],
   );
 
@@ -51,10 +52,13 @@ export function useFavorites() {
         return;
       }
       const token = localStorage.getItem("riotous_session") || "";
-      const existing = favorites.find((f) => f.product_handle === product.handle);
+      const currentList = Array.isArray(favorites) ? favorites : [];
+      const existing = currentList.find((f) => f?.product_handle === product.handle);
 
       if (existing) {
-        setFavorites((prev) => prev.filter((f) => f.product_handle !== product.handle));
+        setFavorites((prev) =>
+          (Array.isArray(prev) ? prev : []).filter((f) => f?.product_handle !== product.handle),
+        );
         try {
           await removeFavorite({
             data: { id: existing.id },
@@ -76,7 +80,9 @@ export function useFavorites() {
             },
             headers: { Authorization: `Bearer ${token}` },
           });
-          setFavorites((prev) => [newFav, ...prev]);
+          if (newFav && newFav.id) {
+            setFavorites((prev) => [newFav, ...(Array.isArray(prev) ? prev : [])]);
+          }
           toast.success("Added to favorites");
         } catch {
           toast.error("Could not save favorite");

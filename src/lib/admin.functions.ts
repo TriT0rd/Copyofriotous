@@ -10,8 +10,16 @@ import {
   type ProductInput,
 } from "@/lib/admin-utils";
 import { ensureDbSchema, getSql } from "@/lib/db";
+import {
+  addInventory,
+  removeInventory,
+  setInventory,
+  listInventoryTransactions,
+  restoreOrderInventory,
+  type InventoryTransactionRecord,
+} from "@/lib/inventory.service";
 
-export type { ProductInput };
+export type { ProductInput, InventoryTransactionRecord };
 
 export type AdminProduct = {
   id: string;
@@ -27,6 +35,7 @@ export type AdminProduct = {
   colors: string[];
   tags: string[];
   category: string | null;
+  sizeStock?: Record<string, number>;
 };
 
 export type AdminOrderItem = {
@@ -108,6 +117,27 @@ export const adminListProducts = createServerFn({ method: "GET" })
       FROM products
       ORDER BY updated_at DESC
     `;
+
+    const productIds = rows.map((p: any) => String(p.id));
+    let variants: any[] = [];
+    if (productIds.length > 0) {
+      variants = await sql`
+        SELECT product_id, size, stock_quantity
+        FROM product_variants
+        WHERE product_id::text = ANY(${productIds}::text[])
+      `;
+    }
+
+    const sizeStockByProd = new Map<string, Record<string, number>>();
+    for (const v of variants) {
+      const pid = String(v.product_id);
+      if (!sizeStockByProd.has(pid)) sizeStockByProd.set(pid, {});
+      const sz = String(v.size || "");
+      if (sz) {
+        sizeStockByProd.get(pid)![sz] = Number(v.stock_quantity || 0);
+      }
+    }
+
     return rows.map((p: any) => ({
       id: String(p.id),
       title: p.name,
@@ -122,7 +152,38 @@ export const adminListProducts = createServerFn({ method: "GET" })
       colors: Array.isArray(p.colors) ? p.colors : [],
       tags: Array.isArray(p.tags) ? p.tags : [],
       category: p.category ?? null,
+      sizeStock: sizeStockByProd.get(String(p.id)) || {},
     }));
+  });
+
+export const adminAddInventory = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d: { productId: string; quantity: number; reason?: string }) => ({
+    productId: String(d.productId),
+    quantity: Math.max(1, Math.round(Number(d.quantity) || 1)),
+    reason: d.reason ? String(d.reason).slice(0, 120) : "Admin manual add",
+  }))
+  .handler(async ({ data, context }) => {
+    return await addInventory(context, {
+      productId: data.productId,
+      quantity: data.quantity,
+      reason: data.reason,
+    });
+  });
+
+export const adminRemoveInventory = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d: { productId: string; quantity: number; reason?: string }) => ({
+    productId: String(d.productId),
+    quantity: Math.max(1, Math.round(Number(d.quantity) || 1)),
+    reason: d.reason ? String(d.reason).slice(0, 120) : "Admin manual remove",
+  }))
+  .handler(async ({ data, context }) => {
+    return await removeInventory(context, {
+      productId: data.productId,
+      quantity: data.quantity,
+      reason: data.reason,
+    });
   });
 
 export const adminSetInventory = createServerFn({ method: "POST" })
@@ -130,26 +191,14 @@ export const adminSetInventory = createServerFn({ method: "POST" })
   .inputValidator((d: { productId: string; quantity: number; reason?: string }) => ({
     productId: String(d.productId),
     quantity: Math.max(0, Math.round(Number(d.quantity) || 0)),
-    reason: d.reason ? String(d.reason).slice(0, 120) : "manual_adjustment",
+    reason: d.reason ? String(d.reason).slice(0, 120) : "Admin manual set",
   }))
   .handler(async ({ data, context }) => {
-    await assertAdmin(context);
-    const sql = getSql();
-    const before = await sql`
-      SELECT stock_quantity FROM products WHERE id::text = ${data.productId} LIMIT 1
-    `;
-    const previous = Number(before[0]?.stock_quantity ?? 0);
-
-    await sql`
-      UPDATE products SET stock_quantity = ${data.quantity}, updated_at = NOW()
-      WHERE id::text = ${data.productId}
-    `;
-
-    await logAudit(context, "inventory.set", "product", data.productId, {
-      from: previous,
-      to: data.quantity,
+    return await setInventory(context, {
+      productId: data.productId,
+      quantity: data.quantity,
+      reason: data.reason,
     });
-    return { ok: true };
   });
 
 export const adminDeleteProduct = createServerFn({ method: "POST" })
@@ -172,7 +221,7 @@ export const adminDeleteProduct = createServerFn({ method: "POST" })
 
       await sql`
         UPDATE products
-        SET is_active = false, tags = ${JSON.stringify(updatedTags)}, updated_at = NOW()
+        SET is_active = false, tags = ${JSON.stringify(updatedTags)}::jsonb, updated_at = NOW()
         WHERE id::text = ${data.productId}
       `;
       return { ok: true, archived: true };
@@ -211,8 +260,8 @@ export const adminCreateProduct = createServerFn({ method: "POST" })
         id, name, slug, description, price, currency, images, category, sizes, colors, stock_quantity, is_active, tags
       ) VALUES (
         ${productId}, ${values.name}, ${slug}, ${values.description}, ${values.price}, 'INR',
-        ${JSON.stringify(values.images)}, ${values.category}, ${JSON.stringify(values.sizes)},
-        ${JSON.stringify(values.colors)}, ${values.stock_quantity}, ${values.is_active}, ${JSON.stringify(values.tags)}
+        ${JSON.stringify(values.images)}::jsonb, ${values.category}, ${JSON.stringify(values.sizes)}::jsonb,
+        ${JSON.stringify(values.colors)}::jsonb, ${values.stock_quantity}, ${values.is_active}, ${JSON.stringify(values.tags)}::jsonb
       );
     `;
 
@@ -222,10 +271,12 @@ export const adminCreateProduct = createServerFn({ method: "POST" })
       values.sizes,
       values.colors,
       values.stock_quantity,
+      values.sizeStock,
     );
 
     await logAudit(context, "product.create", "product", productId, {
       name: values.name,
+      stock: values.stock_quantity,
     });
     return { ok: true, productId };
   });
@@ -244,20 +295,28 @@ export const adminUpdateProduct = createServerFn({ method: "POST" })
         name = ${values.name},
         description = ${values.description},
         price = ${values.price},
-        images = ${JSON.stringify(values.images)},
+        images = ${JSON.stringify(values.images)}::jsonb,
         category = ${values.category},
-        sizes = ${JSON.stringify(values.sizes)},
-        colors = ${JSON.stringify(values.colors)},
+        sizes = ${JSON.stringify(values.sizes)}::jsonb,
+        colors = ${JSON.stringify(values.colors)}::jsonb,
         stock_quantity = ${values.stock_quantity},
         is_active = ${values.is_active},
-        tags = ${JSON.stringify(values.tags)},
+        tags = ${JSON.stringify(values.tags)}::jsonb,
         updated_at = NOW()
       WHERE id::text = ${data.productId}
     `;
 
-    await syncProductVariants(context, data.productId, values.sizes, values.colors);
+    await syncProductVariants(
+      context,
+      data.productId,
+      values.sizes,
+      values.colors,
+      values.stock_quantity,
+      values.sizeStock,
+    );
     await logAudit(context, "product.update", "product", data.productId, {
       name: values.name,
+      stock: values.stock_quantity,
     });
     return { ok: true };
   });
@@ -311,121 +370,132 @@ export const adminListVariants = createServerFn({ method: "GET" })
     });
   });
 
+export const adminAddVariantInventory = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d: { variantId: string; quantity: number; reason?: string }) => ({
+    variantId: String(d.variantId),
+    quantity: Math.max(1, Math.round(Number(d.quantity) || 1)),
+    reason: d.reason ? String(d.reason).slice(0, 120) : "Admin manual add",
+  }))
+  .handler(async ({ data, context }) => {
+    return await addInventory(context, {
+      variantId: data.variantId,
+      quantity: data.quantity,
+      reason: data.reason,
+    });
+  });
+
+export const adminRemoveVariantInventory = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d: { variantId: string; quantity: number; reason?: string }) => ({
+    variantId: String(d.variantId),
+    quantity: Math.max(1, Math.round(Number(d.quantity) || 1)),
+    reason: d.reason ? String(d.reason).slice(0, 120) : "Admin manual remove",
+  }))
+  .handler(async ({ data, context }) => {
+    return await removeInventory(context, {
+      variantId: data.variantId,
+      quantity: data.quantity,
+      reason: data.reason,
+    });
+  });
+
 export const adminSetVariantInventory = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .inputValidator((d: { variantId: string; quantity: number; reason?: string }) => ({
     variantId: String(d.variantId),
     quantity: Math.max(0, Math.round(Number(d.quantity) || 0)),
-    reason: d.reason ? String(d.reason).slice(0, 120) : "manual_adjustment",
+    reason: d.reason ? String(d.reason).slice(0, 120) : "Admin manual set",
   }))
   .handler(async ({ data, context }) => {
-    await assertAdmin(context);
-    const sql = getSql();
-    const before = await sql`
-      SELECT product_id, stock_quantity, reserved_stock, size, color
-      FROM product_variants
-      WHERE id::text = ${data.variantId}
-      LIMIT 1
-    `;
-    if (before.length === 0) throw new Error("That variant no longer exists");
-    const v = before[0];
-    if (data.quantity < Number(v.reserved_stock || 0)) {
-      throw new Error(
-        `${v.reserved_stock} unit(s) are reserved by open orders — stock cannot go below that`,
-      );
-    }
-
-    const previous = Number(v.stock_quantity ?? 0);
-    await sql`
-      UPDATE product_variants SET stock_quantity = ${data.quantity}, updated_at = NOW()
-      WHERE id::text = ${data.variantId}
-    `;
-
-    await logAudit(context, "inventory.set_variant", "product_variant", data.variantId, {
-      size: v.size,
-      color: v.color,
-      from: previous,
-      to: data.quantity,
+    return await setInventory(context, {
+      variantId: data.variantId,
+      quantity: data.quantity,
+      reason: data.reason,
     });
-    return { ok: true };
   });
 
 export const adminListOrders = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }): Promise<AdminOrder[]> => {
-    await assertAdmin(context);
-    await ensureDbSchema();
-    const sql = getSql();
-    const orders = await sql`
-      SELECT id, order_number, created_at, total_amount, subtotal, discount_amount, discount_code,
-        shipping_charge, tax_amount, currency, status, payment_status, payment_method, stock_state,
-        shipping_name, shipping_email, shipping_phone, shipping_address, billing_address,
-        courier_name, tracking_number, tracking_url, shipped_at, delivered_at, cancelled_at, admin_notes
-      FROM orders
-      ORDER BY created_at DESC
-      LIMIT 500
-    `;
+    try {
+      await assertAdmin(context);
+      await ensureDbSchema();
+      const sql = getSql();
+      const orders = await sql`
+        SELECT id, order_number, created_at, total_amount, subtotal, discount_amount, discount_code,
+          shipping_charge, tax_amount, currency, status, payment_status, payment_method, stock_state,
+          shipping_name, shipping_email, shipping_phone, shipping_address, billing_address,
+          courier_name, tracking_number, tracking_url, shipped_at, delivered_at, cancelled_at, admin_notes
+        FROM orders
+        ORDER BY created_at DESC
+        LIMIT 500
+      `;
 
-    if (orders.length === 0) return [];
+      if (orders.length === 0) return [];
 
-    const orderIds = orders.map((o) => String(o.id));
-    const items = await sql`
-      SELECT i.id, i.order_id, i.product_id, i.product_name, i.product_image, i.quantity, i.price,
-        i.selected_size, i.selected_color, i.subtotal, i.design_submission_id,
-        d.preview_data_url as design_preview
-      FROM order_items i
-      LEFT JOIN design_submissions d ON i.design_submission_id = d.id
-      WHERE i.order_id::text = ANY(${orderIds}::text[])
-    `;
+      const orderIds = orders.map((o) => String(o.id));
+      const items = await sql`
+        SELECT i.id, i.order_id, i.product_id, i.product_name, i.product_image, i.quantity, i.price,
+          i.selected_size, i.selected_color, i.subtotal, i.design_submission_id,
+          d.preview_data_url as design_preview
+        FROM order_items i
+        LEFT JOIN design_submissions d ON i.design_submission_id = d.id
+        WHERE i.order_id::text = ANY(${orderIds}::text[])
+      `;
 
-    const itemsByOrderId = new Map<string, AdminOrderItem[]>();
-    for (const item of items) {
-      const oId = String(item.order_id);
-      if (!itemsByOrderId.has(oId)) itemsByOrderId.set(oId, []);
-      itemsByOrderId.get(oId)!.push({
-        id: String(item.id),
-        product_id: item.product_id ? String(item.product_id) : null,
-        product_name: (item.product_name as string) || "Item",
-        product_image: (item.product_image as string) || null,
-        quantity: Number(item.quantity || 1),
-        price: Number(item.price || 0),
-        selected_size: (item.selected_size as string) || null,
-        selected_color: (item.selected_color as string) || null,
-        subtotal: Number(item.subtotal || 0),
-        design_submission_id: (item.design_submission_id as string) || null,
-        design_preview: (item.design_preview as string) || null,
-      });
+      const itemsByOrderId = new Map<string, AdminOrderItem[]>();
+      for (const item of items) {
+        const oId = String(item.order_id);
+        if (!itemsByOrderId.has(oId)) itemsByOrderId.set(oId, []);
+        itemsByOrderId.get(oId)!.push({
+          id: String(item.id),
+          product_id: item.product_id ? String(item.product_id) : null,
+          product_name: (item.product_name as string) || "Item",
+          product_image: (item.product_image as string) || null,
+          quantity: Number(item.quantity || 1),
+          price: Number(item.price || 0),
+          selected_size: (item.selected_size as string) || null,
+          selected_color: (item.selected_color as string) || null,
+          subtotal: Number(item.subtotal || 0),
+          design_submission_id: (item.design_submission_id as string) || null,
+          design_preview: (item.design_preview as string) || null,
+        });
+      }
+
+      return orders.map((o: any) => ({
+        id: String(o.id),
+        order_number: o.order_number,
+        created_at: new Date(o.created_at).toISOString(),
+        total_amount: Number(o.total_amount || 0),
+        subtotal: Number(o.subtotal || 0),
+        discount_amount: Number(o.discount_amount || 0),
+        discount_code: o.discount_code || null,
+        shipping_charge: Number(o.shipping_charge || 0),
+        tax_amount: Number(o.tax_amount || 0),
+        currency: o.currency || "INR",
+        status: o.status || "Pending",
+        payment_status: o.payment_status || "Pending",
+        payment_method: o.payment_method || "COD",
+        stock_state: o.stock_state || "Normal",
+        shipping_name: o.shipping_name || "",
+        shipping_email: o.shipping_email || "",
+        shipping_phone: o.shipping_phone || null,
+        shipping_address: o.shipping_address || "",
+        billing_address: o.billing_address || null,
+        courier_name: o.courier_name || null,
+        tracking_number: o.tracking_number || null,
+        tracking_url: o.tracking_url || null,
+        shipped_at: o.shipped_at ? new Date(o.shipped_at).toISOString() : null,
+        delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : null,
+        cancelled_at: o.cancelled_at ? new Date(o.cancelled_at).toISOString() : null,
+        admin_notes: o.admin_notes || null,
+        items: itemsByOrderId.get(String(o.id)) || [],
+      }));
+    } catch (err) {
+      console.warn("[Admin] adminListOrders error:", err);
+      return [];
     }
-
-    return orders.map((o: any) => ({
-      id: String(o.id),
-      order_number: o.order_number,
-      created_at: new Date(o.created_at).toISOString(),
-      total_amount: Number(o.total_amount || 0),
-      subtotal: Number(o.subtotal || 0),
-      discount_amount: Number(o.discount_amount || 0),
-      discount_code: o.discount_code || null,
-      shipping_charge: Number(o.shipping_charge || 0),
-      tax_amount: Number(o.tax_amount || 0),
-      currency: o.currency || "INR",
-      status: o.status || "Pending",
-      payment_status: o.payment_status || "Pending",
-      payment_method: o.payment_method || "COD",
-      stock_state: o.stock_state || "Normal",
-      shipping_name: o.shipping_name || "",
-      shipping_email: o.shipping_email || "",
-      shipping_phone: o.shipping_phone || null,
-      shipping_address: o.shipping_address || "",
-      billing_address: o.billing_address || null,
-      courier_name: o.courier_name || null,
-      tracking_number: o.tracking_number || null,
-      tracking_url: o.tracking_url || null,
-      shipped_at: o.shipped_at ? new Date(o.shipped_at).toISOString() : null,
-      delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : null,
-      cancelled_at: o.cancelled_at ? new Date(o.cancelled_at).toISOString() : null,
-      admin_notes: o.admin_notes || null,
-      items: itemsByOrderId.get(String(o.id)) || [],
-    }));
   });
 
 export type OrderPatchInput = {
@@ -447,7 +517,18 @@ export const adminUpdateOrderStatus = createServerFn({ method: "POST" })
     const sql = getSql();
 
     if (data.status) {
-      await sql`UPDATE orders SET status = ${data.status}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
+      if (data.status === "Cancelled" || data.status === "Returned") {
+        await restoreOrderInventory(
+          data.orderId,
+          `Admin set status to ${data.status}`,
+          context.userId,
+        );
+        if (data.status === "Returned") {
+          await sql`UPDATE orders SET status = 'Returned', updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
+        }
+      } else {
+        await sql`UPDATE orders SET status = ${data.status}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
+      }
     }
     if (data.paymentStatus) {
       await sql`UPDATE orders SET payment_status = ${data.paymentStatus}, updated_at = NOW() WHERE id::text = ${String(data.orderId)}`;
@@ -480,17 +561,48 @@ export const adminBulkUpdateOrderStatus = createServerFn({ method: "POST" })
     const sql = getSql();
     if (!data.orderIds.length) return { ok: true, updated: 0 };
 
-    await sql`
-      UPDATE orders
-      SET status = ${data.status}, updated_at = NOW()
-      WHERE id::text = ANY(${data.orderIds}::text[])
-    `;
+    if (data.status === "Cancelled" || data.status === "Returned") {
+      for (const orderId of data.orderIds) {
+        await restoreOrderInventory(
+          orderId,
+          `Admin bulk ${data.status.toLowerCase()}`,
+          context.userId,
+        );
+      }
+      if (data.status === "Returned") {
+        await sql`
+          UPDATE orders
+          SET status = 'Returned', updated_at = NOW()
+          WHERE id::text = ANY(${data.orderIds}::text[])
+        `;
+      }
+    } else {
+      await sql`
+        UPDATE orders
+        SET status = ${data.status}, updated_at = NOW()
+        WHERE id::text = ANY(${data.orderIds}::text[])
+      `;
+    }
 
     await logAudit(context, "order.bulk_update", "order", null, {
       status: data.status,
       count: data.orderIds.length,
     });
     return { ok: true, updated: data.orderIds.length };
+  });
+
+export const adminListInventoryTransactions = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
+  .inputValidator(
+    (d?: { productId?: string; variantId?: string; orderId?: string; limit?: number }) => ({
+      productId: d?.productId ? String(d.productId) : undefined,
+      variantId: d?.variantId ? String(d.variantId) : undefined,
+      orderId: d?.orderId ? String(d.orderId) : undefined,
+      limit: d?.limit ? Number(d.limit) : 50,
+    }),
+  )
+  .handler(async ({ data, context }): Promise<InventoryTransactionRecord[]> => {
+    return await listInventoryTransactions(context, data);
   });
 
 export const adminGetDesign = createServerFn({ method: "GET" })

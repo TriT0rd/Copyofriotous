@@ -18,7 +18,6 @@ import { useCartStore } from "@/stores/cart-store";
 import { useAuth } from "@/hooks/use-auth";
 import { isAdminEmail } from "@/lib/auth";
 import { BrandName } from "@/components/brand-name";
-import riotousLogo from "@/assets/riotous-logo.png";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -102,7 +101,7 @@ export function SiteHeader() {
 
           <Link to="/" className="flex shrink-0 items-center" aria-label="RIOTOUS home">
             <img
-              src={riotousLogo}
+              src="/assets/riotous-logo.png"
               alt="RIOTOUS"
               className={`shrink-0 object-contain transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                 scrolled ? "w-[115px] h-auto md:w-auto md:h-7" : "w-[145px] h-auto md:w-auto md:h-9"

@@ -24,12 +24,6 @@ import {
   type SavedDesign,
 } from "@/lib/saved-designs.functions";
 
-import teeBlackFront from "@/assets/tee-black-front.png";
-import teeBlackBack from "@/assets/tee-black-back.png";
-import teeMaroonFront from "@/assets/tee-maroon-front.png";
-import teeMaroonBack from "@/assets/tee-maroon-back.png";
-import teeOliveFront from "@/assets/tee-olive-front.png";
-import teeOliveBack from "@/assets/tee-olive-back.png";
 /**
  * Renders the tee preview at a capped resolution as JPEG so the artwork always
  * fits inside the submission payload (a multi-MB PNG used to fail silently and
@@ -66,20 +60,20 @@ const COLORS = [
   {
     name: "Black",
     hex: "#0a0a0a",
-    front: teeBlackFront,
-    back: teeBlackBack,
+    front: "/assets/tee-black-front.png",
+    back: "/assets/tee-black-back.png",
   },
   {
     name: "Maroon",
     hex: "#6b1d24",
-    front: teeMaroonFront,
-    back: teeMaroonBack,
+    front: "/assets/tee-maroon-front.png",
+    back: "/assets/tee-maroon-back.png",
   },
   {
     name: "Olive",
     hex: "#3e4a2a",
-    front: teeOliveFront,
-    back: teeOliveBack,
+    front: "/assets/tee-olive-front.png",
+    back: "/assets/tee-olive-back.png",
   },
 ];
 

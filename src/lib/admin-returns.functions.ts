@@ -8,6 +8,7 @@ import {
 } from "@/lib/returns-utils";
 import { type ReturnStatus } from "@/lib/returns-shared";
 import { getSql } from "@/lib/db";
+import { restoreReturnInventory } from "@/lib/inventory.service";
 
 export type { AdminReturnRecord };
 
@@ -73,6 +74,22 @@ export const adminUpdateReturn = createServerFn({ method: "POST" })
 
     if (data.status) {
       await sql`UPDATE returns SET status = ${data.status}, updated_at = NOW() WHERE id = ${data.returnId}`;
+
+      // If return item reached Received or Refunded state, restore stock idempotently
+      if (data.status === "Received" || data.status === "Refunded") {
+        const ret = await sql`
+          SELECT id, order_id, order_item_id, quantity FROM returns WHERE id = ${data.returnId} LIMIT 1
+        `;
+        if (ret.length > 0 && ret[0].order_item_id) {
+          await restoreReturnInventory({
+            returnId: String(ret[0].id),
+            orderId: String(ret[0].order_id),
+            orderItemId: String(ret[0].order_item_id),
+            quantity: Number(ret[0].quantity || 1),
+            actorId: context.userId,
+          });
+        }
+      }
     }
     if (data.refundAmount !== undefined && data.refundAmount !== null) {
       await sql`UPDATE returns SET refund_amount = ${data.refundAmount}, updated_at = NOW() WHERE id = ${data.returnId}`;

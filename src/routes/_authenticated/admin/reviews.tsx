@@ -158,7 +158,7 @@ function AdminReviewsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const all = listQ.data ?? [];
+  const all = useMemo(() => (Array.isArray(listQ.data) ? listQ.data : []), [listQ.data]);
 
   const stats = useMemo(() => {
     const by = (s: ReviewStatus) => all.filter((r) => r.status === s).length;

@@ -16,6 +16,7 @@ export const Route = createFileRoute("/_authenticated/account/favorites")({
 
 function FavoritesPage() {
   const { favorites, loading, toggle } = useFavorites();
+  const list = Array.isArray(favorites) ? favorites : [];
 
   return (
     <div className="mx-auto max-w-[1400px] px-6 py-16 md:px-10 md:py-24">
@@ -40,7 +41,7 @@ function FavoritesPage() {
         </div>
       )}
 
-      {!loading && favorites.length === 0 && (
+      {!loading && list.length === 0 && (
         <div className="rounded-2xl border border-border bg-secondary/40 py-20 text-center">
           <Heart className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-4 text-lg font-semibold">No favorites yet</p>
@@ -56,9 +57,9 @@ function FavoritesPage() {
         </div>
       )}
 
-      {!loading && favorites.length > 0 && (
+      {!loading && list.length > 0 && (
         <div className="grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-4">
-          {favorites.map((f) => (
+          {list.map((f) => (
             <div key={f.id} className="group relative">
               <Link to="/product/$handle" params={{ handle: f.product_handle }} className="block">
                 <div className="relative aspect-[4/5] w-full overflow-hidden rounded-2xl bg-secondary">

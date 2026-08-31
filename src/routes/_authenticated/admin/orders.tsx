@@ -179,12 +179,14 @@ function OrdersPage() {
       replace: true,
     });
 
-  const orders = ordersQ.data ?? [];
+  const orders = useMemo(() => (Array.isArray(ordersQ.data) ? ordersQ.data : []), [ordersQ.data]);
   const filtered = useMemo(() => {
+    if (!Array.isArray(orders)) return [];
     const q = (search.q ?? "").toLowerCase().trim();
     const from = search.from ? new Date(search.from).getTime() : null;
     const to = search.to ? new Date(search.to).getTime() + 86400000 : null;
     return orders.filter((o) => {
+      if (!o) return false;
       if (search.status && o.status !== search.status) return false;
       if (search.payment && o.payment_status !== search.payment) return false;
       const t = new Date(o.created_at).getTime();
@@ -192,16 +194,19 @@ function OrdersPage() {
       if (to && t > to) return false;
       if (q) {
         const hay =
-          `${o.order_number} ${o.shipping_name} ${o.shipping_email} ${o.shipping_phone ?? ""} ${o.tracking_number ?? ""}`.toLowerCase();
+          `${o.order_number ?? ""} ${o.shipping_name ?? ""} ${o.shipping_email ?? ""} ${o.shipping_phone ?? ""} ${o.tracking_number ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
   }, [orders, search]);
 
-  const revenue = filtered
-    .filter((o) => !["Cancelled", "Returned", "Refunded"].includes(o.status))
-    .reduce((s, o) => s + Number(o.total_amount || 0), 0);
+  const revenue = useMemo(() => {
+    if (!Array.isArray(filtered)) return 0;
+    return filtered
+      .filter((o) => o && !["Cancelled", "Returned", "Refunded"].includes(o.status))
+      .reduce((s, o) => s + Number(o.total_amount || 0), 0);
+  }, [filtered]);
 
   return (
     <div className="space-y-6">
@@ -356,7 +361,9 @@ function OrdersPage() {
                 </div>
                 <div className="text-right">
                   <div className="font-semibold">{money(o.total_amount, o.currency)}</div>
-                  <div className="text-xs text-muted-foreground">{o.items.length} item(s)</div>
+                  <div className="text-xs text-muted-foreground">
+                    {(o.items ?? []).length} item(s)
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button

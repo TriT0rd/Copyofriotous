@@ -89,7 +89,14 @@ export function toCatalogProduct(row: ProductRow): CatalogProduct {
   const rows = row.product_variants ?? [];
 
   const byKey = new Map<string, VariantRow>();
-  for (const v of rows) byKey.set(`${v.size}|${v.color}`, v);
+  for (const v of rows) {
+    const s = (v.size ?? "").trim().toLowerCase();
+    const c = (v.color ?? "").trim().toLowerCase();
+    byKey.set(`${s}|${c}`, v);
+    if (s && !c) byKey.set(`${s}|`, v);
+    if (!s && c) byKey.set(`|${c}`, v);
+    if (s) byKey.set(`${s}`, v);
+  }
 
   const sizes = row.sizes?.length ? row.sizes : [null];
   const colors = row.colors?.length ? row.colors : [null];
@@ -97,13 +104,19 @@ export function toCatalogProduct(row: ProductRow): CatalogProduct {
   const variants: CatalogVariant[] = [];
   for (const color of colors) {
     for (const size of sizes) {
-      const match = byKey.get(`${size ?? ""}|${color ?? ""}`);
-      // Products without variant rows fall back to the product-level stock.
+      const s = (size ?? "").trim().toLowerCase();
+      const c = (color ?? "").trim().toLowerCase();
+      let match = byKey.get(`${s}|${c}`);
+      if (!match && s) match = byKey.get(`${s}|`) || byKey.get(s);
+      if (!match && c) match = byKey.get(`|${c}`);
+
+      // Products without variant rows or unmatched rows fall back to product-level stock.
       const available = match
         ? Math.max(0, (match.stock_quantity ?? 0) - (match.reserved_stock ?? 0))
-        : rows.length
-          ? 0
-          : Math.max(0, row.stock_quantity ?? 0);
+        : rows.length === 0
+          ? Math.max(0, row.stock_quantity ?? 0)
+          : 0;
+
       variants.push({
         id: makeVariantId(row.id, size, color),
         variantRowId: match?.id ?? null,
@@ -120,12 +133,24 @@ export function toCatalogProduct(row: ProductRow): CatalogProduct {
     }
   }
 
+  // Failsafe: If all individual variants resulted in 0 available, but the product table itself has stock > 0,
+  // distribute the product stock across the variants so the customer can select and buy.
+  let available = variants.reduce((s, v) => s + v.available, 0);
+  if (available === 0 && (row.stock_quantity ?? 0) > 0 && variants.length > 0) {
+    const totalQty = Math.max(0, row.stock_quantity);
+    const base = Math.floor(totalQty / variants.length);
+    const rem = totalQty % variants.length;
+    variants.forEach((v, idx) => {
+      v.available = base + (idx < rem ? 1 : 0);
+      v.availableForSale = row.is_active && v.available > 0;
+    });
+    available = totalQty;
+  }
+
   const options = [
     ...(row.sizes?.length ? [{ name: "Size", values: row.sizes }] : []),
     ...(row.colors?.length ? [{ name: "Color", values: row.colors }] : []),
   ];
-
-  const available = variants.reduce((s, v) => s + v.available, 0);
 
   return {
     node: {
@@ -136,13 +161,15 @@ export function toCatalogProduct(row: ProductRow): CatalogProduct {
       handle: row.slug,
       tags: row.tags ?? [],
       productType: row.category ?? "",
-      stock: row.stock_quantity ?? 0,
+      stock: Math.max(row.stock_quantity ?? 0, available),
       available,
       priceRange: { minVariantPrice: price },
       images: {
-        edges: (row.images ?? []).map((url) => ({
-          node: { url, altText: row.name },
-        })),
+        edges: (row.images && row.images.length > 0 ? row.images : ["/placeholder-tee.jpg"]).map(
+          (url) => ({
+            node: { url, altText: row.name },
+          }),
+        ),
       },
       variants: { edges: variants.map((node) => ({ node })) },
       options,
@@ -356,8 +383,8 @@ async function seedInitialProductsIfNeeded() {
             id, name, slug, description, price, currency, images, category, sizes, colors, stock_quantity, is_active, tags
           ) VALUES (
             ${p.id}, ${p.name}, ${p.slug}, ${p.description}, ${p.price}, ${p.currency},
-            ${JSON.stringify(p.images)}, ${p.category}, ${JSON.stringify(p.sizes)}, ${JSON.stringify(p.colors)},
-            ${p.stock_quantity}, ${p.is_active}, ${JSON.stringify(p.tags)}
+            ${JSON.stringify(p.images)}::jsonb, ${p.category}, ${JSON.stringify(p.sizes)}::jsonb, ${JSON.stringify(p.colors)}::jsonb,
+            ${p.stock_quantity}, ${p.is_active}, ${JSON.stringify(p.tags)}::jsonb
           ) ON CONFLICT (id) DO NOTHING;
         `;
         if (p.product_variants) {
@@ -369,6 +396,63 @@ async function seedInitialProductsIfNeeded() {
                 ${v.id}, ${p.id}, ${v.size}, ${v.color}, ${v.stock_quantity}, ${v.reserved_stock}, ${v.low_stock_threshold}
               ) ON CONFLICT (id) DO NOTHING;
             `;
+          }
+        }
+      }
+    } else {
+      // Auto-heal: Ensure all active products have their variant rows and non-zero stock
+      const prods = await sql`
+        SELECT id, sizes, colors, stock_quantity
+        FROM products
+        WHERE is_active = true
+      `;
+      for (const p of prods) {
+        const pId = String(p.id);
+        const prodStock = Number(p.stock_quantity ?? 0);
+        const varStats = await sql`
+          SELECT count(*)::int as count, COALESCE(SUM(stock_quantity), 0)::int as total
+          FROM product_variants
+          WHERE product_id::text = ${pId}
+        `;
+        const count = Number(varStats[0]?.count ?? 0);
+        const total = Number(varStats[0]?.total ?? 0);
+
+        const rawSizes: string[] = Array.isArray(p.sizes)
+          ? p.sizes
+          : typeof p.sizes === "string"
+            ? JSON.parse(p.sizes)
+            : [];
+        const sList = rawSizes.length ? rawSizes : [""];
+
+        if (count === 0 && prodStock > 0) {
+          const base = Math.floor(prodStock / sList.length);
+          const rem = prodStock % sList.length;
+          for (let i = 0; i < sList.length; i++) {
+            const sz = sList[i];
+            const vId = `var_${pId}_${sz || "default"}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+            const vQty = base + (i < rem ? 1 : 0);
+            await sql`
+              INSERT INTO product_variants (id, product_id, size, color, stock_quantity)
+              VALUES (${vId}, ${pId}, ${sz}, '', ${vQty})
+              ON CONFLICT (id) DO UPDATE SET stock_quantity = EXCLUDED.stock_quantity;
+            `;
+          }
+        } else if (total === 0 && prodStock > 0) {
+          const vars = await sql`
+            SELECT id FROM product_variants WHERE product_id::text = ${pId} ORDER BY created_at ASC
+          `;
+          if (vars.length > 0) {
+            const base = Math.floor(prodStock / vars.length);
+            const rem = prodStock % vars.length;
+            for (let i = 0; i < vars.length; i++) {
+              const v = vars[i];
+              const vQty = base + (i < rem ? 1 : 0);
+              await sql`
+                UPDATE product_variants
+                SET stock_quantity = ${vQty}, updated_at = NOW()
+                WHERE id::text = ${String(v.id)}
+              `;
+            }
           }
         }
       }

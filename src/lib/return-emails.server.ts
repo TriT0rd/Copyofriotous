@@ -113,14 +113,17 @@ export function emailContent(event: ReturnEmailEvent, r: ReturnLike) {
 }
 
 function isProviderConfigured() {
-  return !!process.env["RESEND_API_KEY"] && !!process.env["RETURN_EMAIL_FROM"];
+  return !!process.env["RESEND_API_KEY"];
 }
 
 /** The single provider-specific call. Swap this to change email provider. */
 async function deliver(to: string, subject: string, text: string) {
   const key = process.env["RESEND_API_KEY"];
-  const from = process.env["RETURN_EMAIL_FROM"];
-  if (!key || !from) throw new Error("no_email_provider_configured");
+  const from =
+    process.env["RETURN_EMAIL_FROM"] ||
+    process.env["EMAIL_FROM"] ||
+    "RIOTOUS <onboarding@resend.dev>";
+  if (!key) throw new Error("no_email_provider_configured");
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",

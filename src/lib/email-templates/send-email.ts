@@ -5,8 +5,8 @@ import { TEMPLATES } from "./registry";
 // Server-only: reads RESEND_API_KEY / EMAIL_FROM. Never import from client components.
 
 const SITE_NAME = "RIOTOUS";
-const FROM_DOMAIN = process.env.EMAIL_FROM_DOMAIN || "riotous.store";
-const FROM_EMAIL = process.env.EMAIL_FROM || `${SITE_NAME} <noreply@${FROM_DOMAIN}>`;
+const FROM_EMAIL =
+  process.env.EMAIL_FROM || process.env.RETURN_EMAIL_FROM || `${SITE_NAME} <onboarding@resend.dev>`;
 
 export type SendTemplateEmailResult = { sent: true } | { sent: false; reason: string };
 

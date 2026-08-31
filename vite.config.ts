@@ -42,6 +42,7 @@ export default defineConfig({
     tailwindcss(),
     tsConfigPaths({ projects: ["./tsconfig.json"] }),
     tanstackStart({
+      client: { entry: "client" },
       server: { entry: "server" },
     }),
     nitro({

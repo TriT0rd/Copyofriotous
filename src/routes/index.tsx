@@ -5,7 +5,6 @@ import { ArrowUpRight, Sparkles, Truck, RotateCcw, MapPin, Package } from "lucid
 import { fetchProducts } from "@/lib/catalog";
 import { ProductCard } from "@/components/product-card";
 import { EmptyProducts } from "@/components/empty-products";
-import heroVideo from "@/assets/riotus-hero.mp4";
 
 const productsQuery = {
   queryKey: ["products", "home"],
@@ -68,9 +67,7 @@ function HomePage() {
       <section className="relative -mt-16 flex min-h-[75svh] items-end overflow-hidden bg-foreground md:-mt-20 md:min-h-[100svh]">
         <video
           className="absolute inset-0 h-full w-full object-contain object-center opacity-90 md:object-cover md:opacity-70"
-
-          src={heroVideo}
-
+          src="/videos/riotus-hero.mp4"
           autoPlay
           loop
           muted
